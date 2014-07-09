@@ -1,6 +1,8 @@
 #define CMEDIA_VENDOR_ID	0x13F6
 #define CMEDIA_CMI8788		0x8788
 
+/* FIXME: Is it useful anymore? */
+#if 0
 /* most DMA channels have a 16-bit counter for 32-bit words */
 #define BUFFER_BYTES_MAX		((1 << 16) * 4)
 /* the multichannel DMA channel has a 24-bit counter */
@@ -9,6 +11,9 @@
 
 #define DEFAULT_BUFFER_BYTES		(BUFFER_BYTES_MAX / 2)
 #define DEFAULT_BUFFER_BYTES_MULTICH	(1024 * 1024)
+#endif
+
+#define DEFAULT_BUFFER_BYTES_MULTICH (4 * 2048)
 
 /* Device IDs */
 #define ASUS_VENDOR_ID		0x1043

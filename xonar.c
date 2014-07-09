@@ -1104,7 +1104,7 @@ xonar_attach(device_t dev)
 		goto bad;
 	}
 
-	sc->bufmaxsz = sc->bufsz = pcm_getbuffersize(dev, 2048, 2048*4, 65536);
+	sc->bufmaxsz = sc->bufsz = pcm_getbuffersize(dev, 2048, DEFAULT_BUFFER_BYTES_MULTICH, 65536);
 	if (bus_dma_tag_create( /* parent */ NULL,
 		/* alignment */ 4, /* boundary */ 0,
 		/* lowaddr */ BUS_SPACE_MAXADDR_32BIT,
