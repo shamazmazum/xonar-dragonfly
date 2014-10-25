@@ -25,7 +25,8 @@
 #include "xonar.h"
 #include "xonar_compat.h"
 
-#define MAX_PORTC 		4
+#define MAX_PORTC 		1
+#define MAX_PORTC_REC 		1
 
 #define CHAN_STATE_INIT 	0x1
 #define CHAN_STATE_PLAY 	0x2
@@ -54,6 +55,8 @@ struct xonar_chinfo {
 	int 			dac_type;
 	int 			play_dma_start;
 	int 			play_irq_mask;
+	int 			rec_dma_start;
+	int 			rec_irq_mask;
 	int 			state;
 	int 			blksz;
 };
@@ -79,6 +82,7 @@ struct xonar_info {
 	bus_space_tag_t st;
 	bus_space_handle_t sh;
 	bus_dma_tag_t	dmat;
+    bus_dma_tag_t	dmat_rec;
 
 	uint16_t model;
 
@@ -87,6 +91,7 @@ struct xonar_info {
 	int pnum;
 	struct pcm1796_info pcm1796;
 	struct xonar_chinfo chan[MAX_PORTC];
+	struct xonar_chinfo chan_rec[MAX_PORTC];
 
 	int anti_pop_delay;
 	int output_control_gpio;
@@ -348,8 +353,10 @@ xonar_chan_init(kobj_t obj, void *devinfo,
 {
 	struct xonar_info *sc = devinfo;
 	struct xonar_chinfo *ch;
+    bus_dma_tag_t dmat;
 
-	ch = &sc->chan[sc->pnum];
+    dmat = (dir == PCMDIR_PLAY) ? sc->dmat : sc->dmat_rec;
+	ch = (dir == PCMDIR_PLAY) ? &sc->chan[sc->pnum] : &sc->chan_rec[sc->pnum];
 	ch->buffer = b;
 	ch->parent = sc;
 	ch->channel = c;
@@ -388,7 +395,7 @@ xonar_chan_init(kobj_t obj, void *devinfo,
 		break;
 	}
 	if (sc->pnum == 0) {
-		if (pcm_sndbuf_alloc(ch->buffer, sc->dmat, 0, sc->bufsz) != 0) {
+		if (pcm_sndbuf_alloc(ch->buffer, dmat, 0, sc->bufsz) != 0) {
 			device_printf(sc->dev, "Cannot allocate sndbuf\n");
 			return NULL;
 		}
@@ -417,11 +424,19 @@ xonar_chan_setspeed(kobj_t obj, void *data, u_int32_t speed)
 	int i2s_rate;
 
 	i2s_rate = i2s_get_rate(speed);
-	cmi8788_write_1(sc, I2S_MULTICH_FORMAT,
-			(cmi8788_read_1(sc, I2S_MULTICH_FORMAT) &
-			 ~I2S_FMT_RATE_MASK) | i2s_rate);
-	ch->spd = speed;
-	return speed;
+    if (ch->dir == PCMDIR_PLAY) {
+        cmi8788_write_1(sc, I2S_MULTICH_FORMAT,
+                        (cmi8788_read_1(sc, I2S_MULTICH_FORMAT) &
+                         ~I2S_FMT_RATE_MASK) | i2s_rate);
+        ch->spd = speed;
+    }
+    else if (ch->dir == PCMDIR_REC) {
+        cmi8788_write_1(sc, I2S_ADC2_FORMAT,
+                        (cmi8788_read_1(sc, I2S_ADC2_FORMAT) &
+                         ~I2S_FMT_RATE_MASK) | i2s_rate);
+        ch->spd = speed;
+    }
+	return ch->spd;
 }
 
 static int
@@ -429,7 +444,7 @@ xonar_chan_setformat(kobj_t obj, void *data, u_int32_t format)
 {
 	struct xonar_chinfo *ch = data;
 	struct xonar_info *sc = ch->parent;
-	int bits;
+	int bits, i2s_bits;
 
 	DEB(device_printf(sc->dev, "%s %dbits %dchans\n", __func__, AFMT_BIT(format),
 					  AFMT_CHANNEL(format)));
@@ -445,14 +460,87 @@ xonar_chan_setformat(kobj_t obj, void *data, u_int32_t format)
 		kern_printf("format unknown\n");
 		return 1;
 	}
-	ch->bps = bits;
+    i2s_bits = i2s_get_bits(format);
+
 	/* set the format bits in play format register */
-	cmi8788_write_1(sc, PLAY_FORMAT,
-			(cmi8788_read_1(sc, PLAY_FORMAT) &
-			 ~MULTICH_FORMAT_MASK) | bits);
+    if (ch->dir == PCMDIR_PLAY)
+    {
+        cmi8788_write_1(sc, PLAY_FORMAT,
+                        (cmi8788_read_1(sc, PLAY_FORMAT) &
+                         ~MULTICH_FORMAT_MASK) | bits);
+        ch->bps = bits;
+    }
+    else if (ch->dir == PCMDIR_REC)
+    {
+        cmi8788_write_1(sc, REC_FORMAT,
+                        (cmi8788_read_1(sc, REC_FORMAT) &
+                         ~MULTICH_FORMAT_MASK) | bits);
+        cmi8788_write_1(sc, I2S_ADC2_FORMAT,
+                        (cmi8788_read_1(sc, I2S_ADC2_FORMAT) &
+                         ~I2S_BITS_MASK) | i2s_bits);
+        ch->bps = bits;
+    }
 
 	return 0;
 }
+
+static void
+xonar_prepare_input(struct xonar_chinfo *ch) 
+{
+	struct xonar_info *sc = ch->parent;
+	int i2s_bits, bits, i2s_rate;
+	uint32_t addr = sndbuf_getbufaddr(ch->buffer);
+
+	switch (ch->adc_type) {
+	case 2:
+		ch->rec_dma_start = 0x2;
+		ch->rec_irq_mask = 0x2;
+		xonar_chan_reset(ch, 0x2);
+
+        DEB(device_printf(sc->dev, "buffer addr = 0x%x size = %d\n",
+						  addr, sndbuf_getsize(ch->buffer)));
+
+		cmi8788_write_4(sc, RECB_ADDR, addr);
+		cmi8788_write_4(sc, RECB_SIZE, sc->bufsz / 4 - 1);
+		/* what is this 1024 you ask
+		 * i have no idea
+		 * oss uses dmap->fragment_size
+		 * alsa uses params_period_bytes()
+		 */
+		cmi8788_write_4(sc, RECB_FRAG, 1024 / 4 /* XXX */ - 1);
+
+		switch (ch->fmt) {
+		default:
+		case AFMT_S16_LE:
+			bits = 0x00;
+			break;
+		case AFMT_S24_LE:
+			bits = 0x04;
+			break;
+		case AFMT_S32_LE:
+			bits = 0x08;
+			break;
+		}
+
+        cmi8788_write_1(sc, REC_FORMAT,
+				(cmi8788_read_1(sc, REC_FORMAT) &
+				 ~MULTICH_FORMAT_MASK) | bits);
+        
+        i2s_bits = i2s_get_bits (ch->fmt);
+		cmi8788_write_1(sc, I2S_ADC2_FORMAT,
+				(cmi8788_read_1(sc, I2S_ADC2_FORMAT) &
+				 ~I2S_BITS_MASK) | i2s_bits);
+
+        i2s_rate = i2s_get_rate (ch->spd);
+        cmi8788_write_1(sc, I2S_ADC2_FORMAT,
+                        (cmi8788_read_1(sc, I2S_ADC2_FORMAT) &
+                         ~I2S_FMT_RATE_MASK) | i2s_rate);
+        break;
+    default:
+        break;
+	}
+}
+
 
 static void
 xonar_prepare_output(struct xonar_chinfo *ch) 
@@ -525,42 +613,87 @@ xonar_chan_trigger(kobj_t obj, void *data, int go)
 		return EINVAL;
 
 	snd_mtxlock(sc->lock);
-	switch (go) {
-	case PCMTRIG_START:
-		DEB(device_printf(sc->dev, "trigger start\n"));
-		DEB(device_printf(sc->dev, "bufsz = %d\n", (int)sc->bufsz));
-		DEB(device_printf(sc->dev, "chan state = 0x%x\n", ch->state));
-		if (ch->state & CHAN_STATE_PLAY)
-			break;
-		if (ch->state == CHAN_STATE_INIT) {
-			xonar_prepare_output(ch);
-			ch->state &= ~CHAN_STATE_INIT;
-		}
-		ch->state |= CHAN_STATE_PLAY;
-		/* enable irq */
-		cmi8788_write_2(sc, IRQ_MASK,
-				cmi8788_read_2(sc, IRQ_MASK) | ch->play_irq_mask);
-		/* enable dma */
-		cmi8788_write_2(sc, DMA_START,
-				cmi8788_read_2(sc, DMA_START) | ch->play_dma_start);
-		break;
+    switch (ch->dir)
+    {
+    case PCMDIR_PLAY:
+        switch (go) {
+        case PCMTRIG_START:
+            DEB(device_printf(sc->dev, "trigger start\n"));
+            DEB(device_printf(sc->dev, "bufsz = %d\n", (int)sc->bufsz));
+            DEB(device_printf(sc->dev, "chan state = 0x%x\n", ch->state));
+            if (ch->state & CHAN_STATE_PLAY)
+                break;
+            if (ch->state == CHAN_STATE_INIT) {
+                xonar_prepare_output(ch);
+                ch->state &= ~CHAN_STATE_INIT;
+            }
+            ch->state |= CHAN_STATE_PLAY;
+            /* enable irq */
+            cmi8788_write_2(sc, IRQ_MASK,
+                            cmi8788_read_2(sc, IRQ_MASK) | ch->play_irq_mask);
+            /* enable dma */
+            cmi8788_write_2(sc, DMA_START,
+                            cmi8788_read_2(sc, DMA_START) | ch->play_dma_start);
+            break;
+            
+        case PCMTRIG_ABORT:
+        case PCMTRIG_STOP:
+            DEB(device_printf(sc->dev, "trigger stop\n"));
+            if (!(ch->state & CHAN_STATE_PLAY))
+                break;
+            ch->state &= ~CHAN_STATE_PLAY;
+            /* disable dma */
+            cmi8788_write_2(sc, DMA_START,
+                            cmi8788_read_2(sc, DMA_START) & ~ch->play_dma_start);
+            /* disable irq */
+            cmi8788_write_2(sc, IRQ_MASK,
+                            cmi8788_read_2(sc, IRQ_MASK) & ~ch->play_irq_mask);
+            break;
+        default:
+            break;
+        }
+        break;
 
-	case PCMTRIG_ABORT:
-	case PCMTRIG_STOP:
-		DEB(device_printf(sc->dev, "trigger stop\n"));
-		if (!(ch->state & CHAN_STATE_PLAY))
-			break;
-		ch->state &= ~CHAN_STATE_PLAY;
-		/* disable dma */
-		cmi8788_write_2(sc, DMA_START,
-				cmi8788_read_2(sc, DMA_START) & ~ch->play_dma_start);
-		/* disable irq */
-		cmi8788_write_2(sc, IRQ_MASK,
-				cmi8788_read_2(sc, IRQ_MASK) & ~ch->play_irq_mask);
-		break;
-	default:
-		break;
-	}
+    case PCMDIR_REC:
+        switch (go) {
+        case PCMTRIG_START:
+            DEB(device_printf(sc->dev, "trigger start\n"));
+            DEB(device_printf(sc->dev, "bufsz = %d\n", (int)sc->bufsz));
+            DEB(device_printf(sc->dev, "chan state = 0x%x\n", ch->state));
+            if (ch->state & CHAN_STATE_RECORD)
+                break;
+            if (ch->state == CHAN_STATE_INIT) {
+                xonar_prepare_input(ch);
+                ch->state &= ~CHAN_STATE_INIT;
+            }
+            ch->state |= CHAN_STATE_RECORD;
+            /* enable irq */
+            cmi8788_write_2(sc, IRQ_MASK,
+                            cmi8788_read_2(sc, IRQ_MASK) | ch->rec_irq_mask);
+            /* enable dma */
+            cmi8788_write_2(sc, DMA_START,
+                            cmi8788_read_2(sc, DMA_START) | ch->rec_dma_start);
+            break;
+            
+        case PCMTRIG_ABORT:
+        case PCMTRIG_STOP:
+            DEB(device_printf(sc->dev, "trigger stop\n"));
+            if (!(ch->state & CHAN_STATE_RECORD))
+                break;
+            ch->state &= ~CHAN_STATE_RECORD;
+            /* disable dma */
+            cmi8788_write_2(sc, DMA_START,
+                            cmi8788_read_2(sc, DMA_START) & ~ch->rec_dma_start);
+            /* disable irq */
+            cmi8788_write_2(sc, IRQ_MASK,
+                            cmi8788_read_2(sc, IRQ_MASK) & ~ch->rec_irq_mask);
+            break;
+        default:
+            break;
+        }
+        break;
+    }
+        
 	snd_mtxunlock(sc->lock);
 	return (0);
 }
@@ -588,6 +721,12 @@ xonar_chan_getptr(kobj_t obj, void *data)
 		switch (ch->dac_type) {
 		case 1:
 			ptr = cmi8788_read_4(sc, MULTICH_ADDR);
+		}
+	}
+	else if (ch->dir == PCMDIR_REC) {
+		switch (ch->adc_type) {
+		case 2:
+			ptr = cmi8788_read_4(sc, RECB_ADDR);
 		}
 	}
 	return ptr;
@@ -841,6 +980,10 @@ xonar_cleanup(struct xonar_info *sc)
 		bus_dma_tag_destroy(sc->dmat);
 		sc->dmat = NULL;
 	}
+    if (sc->dmat_rec) {
+		bus_dma_tag_destroy(sc->dmat);
+		sc->dmat = NULL;
+	}
 	if (sc->ih) {
 		bus_teardown_intr(sc->dev, sc->irq, sc->ih);
 		sc->ih = NULL;
@@ -1040,10 +1183,11 @@ sysctl_xonar_deemph(SYSCTL_HANDLER_ARGS)
 static void
 xonar_intr(void *p) {
 	struct xonar_info *sc = p;
-	struct xonar_chinfo *ch;
+	struct xonar_chinfo *ch, *ch_rec;
 	unsigned int intstat;
 
 	ch = &sc->chan[0];
+    ch_rec = &sc->chan_rec[0];
 	if ((intstat = cmi8788_read_2(sc, IRQ_STAT)) == 0)
 		return;
 	if ((intstat & ch->play_irq_mask)) {
@@ -1055,6 +1199,16 @@ xonar_intr(void *p) {
 		cmi8788_write_2(sc, IRQ_MASK,
 				cmi8788_read_2(sc, IRQ_MASK) | ch->play_irq_mask);
 		chn_intr(ch->channel);
+	}
+    if ((intstat & ch_rec->rec_irq_mask)) {
+		if (!(ch_rec->state & CHAN_STATE_RECORD))
+			return;
+		/* Acknowledge the interrupt by disabling and enabling the irq */
+		cmi8788_write_2(sc, IRQ_MASK,
+				cmi8788_read_2(sc, IRQ_MASK) & ~ch_rec->rec_irq_mask);
+		cmi8788_write_2(sc, IRQ_MASK,
+				cmi8788_read_2(sc, IRQ_MASK) | ch_rec->rec_irq_mask);
+		chn_intr(ch_rec->channel);
 	}
 }
 
@@ -1122,15 +1276,24 @@ xonar_attach(device_t dev)
 		device_printf(sc->dev, "unable to create dma tag\n");
 		return (ENOMEM);
 	}
+	if (xonar_create_dma_tag(&sc->dmat_rec, sc->bufsz, bus_get_dma_tag(dev), sc->lock) != 0) {
+		device_printf(sc->dev, "unable to create dma tag\n");
+		return (ENOMEM);
+	}
 
 	if (mixer_init(dev, &xonar_mixer_class, sc))
 		goto bad;
 
-	if (pcm_register(dev, sc, 1 /* MAX_PORTC */, 0))
+	if (pcm_register(dev, sc, MAX_PORTC, MAX_PORTC_REC))
 		goto bad;
 
-	for(int i = 0; i < 1 /* MAX_PORTC */; i++) {
+	for(int i = 0; i <  MAX_PORTC ; i++) {
 		pcm_addchan(dev, PCMDIR_PLAY, &xonar_chan_class, sc);
+		sc->pnum++;
+	}
+    sc->pnum = 0;
+    for(int i = 0; i <  MAX_PORTC_REC ; i++) {
+		pcm_addchan(dev, PCMDIR_REC, &xonar_chan_class, sc);
 		sc->pnum++;
 	}
 	kern_snprintf(status, SND_STATUSLEN, "at io 0x%lx irq %ld %s",
