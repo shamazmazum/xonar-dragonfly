@@ -75,6 +75,7 @@ struct xonar_info {
 	struct mtx *lock;
 
 	int 			output;
+    int             monitor;
 	struct resource *reg, *irq;
 	int regtype, regid, irqid;
 
@@ -834,6 +835,19 @@ cmi8788_set_output(struct xonar_info *sc, int which)
     snd_mtxunlock(sc->lock);
 }
 
+static void
+cmi8788_set_monitor(struct xonar_info *sc, int enable)
+{
+    snd_mtxlock(sc->lock);
+    if (enable)
+        cmi8788_write_1(sc, REC_MONITOR,
+                        cmi8788_read_1 (sc, REC_MONITOR) | 0x04);
+    else
+        cmi8788_write_1(sc, REC_MONITOR,
+                        cmi8788_read_1 (sc, REC_MONITOR) & ~0x04);
+    snd_mtxunlock(sc->lock);
+}
+
 static int
 xonar_init(struct xonar_info *sc)
 {
@@ -1118,6 +1132,28 @@ sysctl_xonar_output(SYSCTL_HANDLER_ARGS)
 }
 
 static int
+sysctl_xonar_monitor(SYSCTL_HANDLER_ARGS) 
+{
+	struct xonar_info *sc;
+	device_t dev;
+	int val, err;
+
+	dev = oidp->oid_arg1;
+	sc = pcm_getdevinfo(dev);
+	if (sc == NULL)
+		return EINVAL;
+	val = sc->monitor;
+	err = sysctl_handle_int(oidp, &val, 0, req);
+	if (err || req->newptr == NULL)
+		return (err);
+	if (val < 0 || val > 1)
+		return (EINVAL);
+	cmi8788_set_monitor(sc, val);
+	sc->monitor = val;
+	return err;
+}
+
+static int
 sysctl_xonar_rolloff(SYSCTL_HANDLER_ARGS) 
 {
 	struct xonar_info *sc;
@@ -1329,6 +1365,11 @@ xonar_attach(device_t dev)
 			"dfbypass", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY, sc->dev,
 			sizeof(sc->dev), sysctl_xonar_bypass, "I",
 			"Set digital filter bypass: 0 - disabled, 1 - enabled");
+    SYSCTL_ADD_PROC(kern_sysctl_ctx(sc->dev),
+			SYSCTL_CHILDREN(kern_sysctl_tree(sc->dev)), OID_AUTO,
+			"monitor", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY, sc->dev,
+			sizeof(sc->dev), sysctl_xonar_monitor, "I",
+            "Enable recording monitor");
 
 	return (0);
 bad:
