@@ -493,6 +493,7 @@ xonar_prepare_input(struct xonar_chinfo *ch)
 
 	switch (ch->adc_type) {
 	case 2:
+        device_printf (sc->dev, "Hello there!\n");
 		ch->rec_dma_start = 0x2;
 		ch->rec_irq_mask = 0x2;
 		xonar_chan_reset(ch, 0x2);
@@ -501,13 +502,13 @@ xonar_prepare_input(struct xonar_chinfo *ch)
 						  addr, sndbuf_getsize(ch->buffer)));
 
 		cmi8788_write_4(sc, RECB_ADDR, addr);
-		cmi8788_write_4(sc, RECB_SIZE, sc->bufsz / 4 - 1);
+		cmi8788_write_2(sc, RECB_SIZE, sc->bufsz / 4 - 1);
 		/* what is this 1024 you ask
 		 * i have no idea
 		 * oss uses dmap->fragment_size
 		 * alsa uses params_period_bytes()
 		 */
-		cmi8788_write_4(sc, RECB_FRAG, 1024 / 4 /* XXX */ - 1);
+		cmi8788_write_2(sc, RECB_FRAG, 1024 / 4 /* XXX */ - 1);
 
 		switch (ch->fmt) {
 		default:
@@ -941,7 +942,10 @@ xonar_init(struct xonar_info *sc)
 
 		cmi8788_write_2(sc, GPIO_DATA,
 				cmi8788_read_2(sc, GPIO_DATA) |
-				GPIO_PIN0 | GPIO_PIN8);
+                        GPIO_PIN0);
+        cmi8788_write_2(sc, GPIO_DATA,
+                        cmi8788_read_2(sc, GPIO_DATA) &
+                        ~GPIO_PIN8);
 
         /* FIXME:
          * Confusing naming. Invokations of the following functions
