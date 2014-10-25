@@ -54,7 +54,6 @@ struct xonar_chinfo {
 	int 			dac_type;
 	int 			play_dma_start;
 	int 			play_irq_mask;
-	int 			play_chan_reset;
 	int 			state;
 	int 			blksz;
 };
@@ -272,22 +271,18 @@ pcm1796_set_bypass(struct xonar_info *sc, int bypass)
 }
 
 static void 
-xonar_chan_reset(struct xonar_chinfo *ch, int direction)
+xonar_chan_reset(struct xonar_chinfo *ch, u_int8_t which)
 {
 	struct xonar_info *sc = ch->parent;
 
-	switch (direction) {
-	case PCMDIR_PLAY:
-		cmi8788_write_1(sc, CHAN_RESET,
-				cmi8788_read_1(sc, CHAN_RESET) |
-				ch->play_chan_reset);
+	cmi8788_write_1(sc, CHAN_RESET,
+					cmi8788_read_1(sc, CHAN_RESET) |
+					which);
 
-		DELAY(10);
-		cmi8788_write_1(sc, CHAN_RESET,
-				cmi8788_read_1(sc, CHAN_RESET) &
-				~ch->play_chan_reset);
-		break;
-	}
+	DELAY(10);
+	cmi8788_write_1(sc, CHAN_RESET,
+					cmi8788_read_1(sc, CHAN_RESET) &
+					~which);
 }
 
 static int
@@ -470,8 +465,7 @@ xonar_prepare_output(struct xonar_chinfo *ch)
 	case 1:
 		ch->play_dma_start = CHANNEL_MULTICH;
 		ch->play_irq_mask = CHANNEL_MULTICH;
-		ch->play_chan_reset = CHANNEL_MULTICH;
-		xonar_chan_reset(ch, PCMDIR_PLAY);
+		xonar_chan_reset(ch, CHANNEL_MULTICH);
 
 		int channels;
 		switch (AFMT_CHANNEL(ch->fmt)) {
