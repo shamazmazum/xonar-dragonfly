@@ -493,7 +493,6 @@ xonar_prepare_input(struct xonar_chinfo *ch)
 
 	switch (ch->adc_type) {
 	case 2:
-        device_printf (sc->dev, "Hello there!\n");
 		ch->rec_dma_start = 0x2;
 		ch->rec_irq_mask = 0x2;
 		xonar_chan_reset(ch, 0x2);
