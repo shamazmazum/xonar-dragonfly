@@ -61,9 +61,6 @@ struct xonar_chinfo {
 
 struct pcm1796_info {
 	u_int16_t 	regs[PCM1796_NREGS];
-	int 		rolloff;
-	int 		bypass;
-	int 		deemph;
 	int 		hp;
 	int 		hp_gain;
 };
@@ -236,38 +233,80 @@ pcm1796_set_mute(struct xonar_info *sc, int mute)
 				18, reg & ~PCM1796_MUTE);
 }
 
+static int
+pcm1796_get_deemph(struct xonar_info *sc)
+{
+	uint16_t res;
+
+    snd_mtxlock (sc->lock);
+    res = (sc->pcm1796.regs[PCM1796_REG18] & PCM1796_DME) ? 1 : 0;
+    snd_mtxunlock (sc->lock);
+    return res;
+}
+
 static void
 pcm1796_set_deemph(struct xonar_info *sc, int deemph)
 {
-	uint16_t reg = sc->pcm1796.regs[PCM1796_REG18];
+	uint16_t reg;
 	/* XXX: set DMF */
 
+    snd_mtxlock (sc->lock);
+    reg = sc->pcm1796.regs[PCM1796_REG18];
 	if (deemph)
 		pcm1796_write(sc, XONAR_STX_FRONTDAC, 18, reg | PCM1796_DME);
 	else
 		pcm1796_write(sc, XONAR_STX_FRONTDAC, 18, reg & ~PCM1796_DME);
+    snd_mtxunlock (sc->lock);
+}
+
+static int
+pcm1796_get_rolloff(struct xonar_info *sc)
+{
+	uint16_t res;
+
+    snd_mtxlock (sc->lock);
+    res = (sc->pcm1796.regs[PCM1796_REG19] & PCM1796_FLT) ? 1 : 0;
+    snd_mtxunlock (sc->lock);
+    return res;
 }
 
 static void
 pcm1796_set_rolloff(struct xonar_info *sc, int rolloff)
 {
-	uint16_t reg = sc->pcm1796.regs[PCM1796_REG19];
+	uint16_t reg;
 
+    snd_mtxlock (sc->lock);
+    reg = sc->pcm1796.regs[PCM1796_REG19];
 	if (rolloff)
 		pcm1796_write(sc, XONAR_STX_FRONTDAC, 19, reg | PCM1796_FLT);
 	else
 		pcm1796_write(sc, XONAR_STX_FRONTDAC, 19, reg & ~PCM1796_FLT);
+    snd_mtxunlock (sc->lock);
+}
+
+static int
+pcm1796_get_bypass(struct xonar_info *sc)
+{
+	uint16_t res;
+
+    snd_mtxlock (sc->lock);
+    res = (sc->pcm1796.regs[PCM1796_REG20] & PCM1796_DFTH) ? 1 : 0;
+    snd_mtxunlock (sc->lock);
+    return res;
 }
 
 static void
 pcm1796_set_bypass(struct xonar_info *sc, int bypass)
 {
-	uint16_t reg = sc->pcm1796.regs[PCM1796_REG20];
+	uint16_t reg;
 
+    snd_mtxlock (sc->lock);
+    reg = sc->pcm1796.regs[PCM1796_REG20];
 	if (bypass) /* just disables sound */
-		pcm1796_write(sc, XONAR_STX_FRONTDAC, 19, reg | PCM1796_DFTH);
+		pcm1796_write(sc, XONAR_STX_FRONTDAC, 20, reg | PCM1796_DFTH);
 	else
-		pcm1796_write(sc, XONAR_STX_FRONTDAC, 19, reg & ~PCM1796_DFTH);
+		pcm1796_write(sc, XONAR_STX_FRONTDAC, 20, reg & ~PCM1796_DFTH);
+    snd_mtxunlock (sc->lock);
 }
 
 static void 
@@ -1104,14 +1143,13 @@ sysctl_xonar_rolloff(SYSCTL_HANDLER_ARGS)
 	sc = pcm_getdevinfo(dev);
 	if (sc == NULL)
 		return EINVAL;
-	val = sc->pcm1796.rolloff;
+	val = pcm1796_get_rolloff (sc);
 	err = sysctl_handle_int(oidp, &val, 0, req);
 	if (err || req->newptr == NULL)
 		return (err);
 	if (val < 0 || val > 1)
 		return (EINVAL);
 	pcm1796_set_rolloff(sc, val);
-	sc->pcm1796.rolloff = val;
 	return err;
 }
 
@@ -1126,14 +1164,13 @@ sysctl_xonar_bypass(SYSCTL_HANDLER_ARGS)
 	sc = pcm_getdevinfo(dev);
 	if (sc == NULL)
 		return EINVAL;
-	val = sc->pcm1796.bypass;
+	val = pcm1796_get_bypass (sc);
 	err = sysctl_handle_int(oidp, &val, 0, req);
 	if (err || req->newptr == NULL)
 		return (err);
 	if (val < 0 || val > 1)
 		return (EINVAL);
 	pcm1796_set_bypass(sc, val);
-	sc->pcm1796.bypass = val;
 	return err;
 }
 
@@ -1148,14 +1185,13 @@ sysctl_xonar_deemph(SYSCTL_HANDLER_ARGS)
 	sc = pcm_getdevinfo(dev);
 	if (sc == NULL)
 		return EINVAL;
-	val = sc->pcm1796.deemph;
+	val = pcm1796_get_deemph (sc);
 	err = sysctl_handle_int(oidp, &val, 0, req);
 	if (err || req->newptr == NULL)
 		return (err);
 	if (val < 0 || val > 1)
 		return (EINVAL);
 	pcm1796_set_deemph(sc, val);
-	sc->pcm1796.deemph = val;
 	return err;
 }
 
