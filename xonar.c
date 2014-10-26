@@ -1232,13 +1232,19 @@ xonar_attach(device_t dev)
 	if (mixer_init(dev, &xonar_mixer_class, sc))
 		goto bad;
 
-	if (pcm_register(dev, sc, MAX_PORTS_PLAY, 0))
+	if (pcm_register(dev, sc, MAX_PORTS_PLAY, MAX_PORTS_REC))
 		goto bad;
 
 	for(int i = 0; i < MAX_PORTS_PLAY; i++) {
 		pcm_addchan(dev, PCMDIR_PLAY, &xonar_chan_class, sc);
 		sc->pnum++;
 	}
+    sc->pnum = 0;
+    for(int i = 0; i < MAX_PORTS_REC; i++) {
+		pcm_addchan(dev, PCMDIR_REC, &xonar_chan_class, sc);
+		sc->pnum++;
+	}
+
 	kern_snprintf(status, SND_STATUSLEN, "at io 0x%lx irq %ld %s",
 		 rman_get_start(sc->reg), rman_get_start(sc->irq),
 		 PCM_KLDSTRING(snd_cmi8788));
