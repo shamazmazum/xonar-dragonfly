@@ -28,9 +28,10 @@
 #define MAX_PORTS_PLAY 		1
 #define MAX_PORTS_REC       1
 
-#define CHAN_STATE_INIT 	0x1
-#define CHAN_STATE_ACTIVE 	0x2
-#define CHAN_STATE_INVALID 	0x8
+#define CHAN_STATE_INIT 	0
+#define CHAN_STATE_ACTIVE 	1
+#define CHAN_STATE_INACTIVE	2
+#define CHAN_STATE_INVALID 	3
 
 #define OUTPUT_LINE 		0
 #define OUTPUT_REAR_HP 		1
@@ -600,7 +601,7 @@ xonar_chan_trigger(kobj_t obj, void *data, int go)
 	if (!PCMTRIG_COMMON(go))
 		return 0;
 
-	if (ch->state & CHAN_STATE_INVALID)
+	if (ch->state == CHAN_STATE_INVALID)
 		return EINVAL;
 
 	snd_mtxlock(sc->lock);
@@ -609,13 +610,11 @@ xonar_chan_trigger(kobj_t obj, void *data, int go)
 		DEB(device_printf(sc->dev, "trigger start\n"));
 		DEB(device_printf(sc->dev, "bufsz = %d\n", (int)sc->bufsz));
 		DEB(device_printf(sc->dev, "chan state = 0x%x\n", ch->state));
-		if (ch->state & CHAN_STATE_ACTIVE)
+		if (ch->state == CHAN_STATE_ACTIVE)
 			break;
-		if (ch->state == CHAN_STATE_INIT) {
+		if (ch->state == CHAN_STATE_INIT)
             prepare_func (ch);
-			ch->state &= ~CHAN_STATE_INIT;
-		}
-		ch->state |= CHAN_STATE_ACTIVE;
+		ch->state = CHAN_STATE_ACTIVE;
 		/* enable irq */
 		cmi8788_write_2(sc, IRQ_MASK,
 				cmi8788_read_2(sc, IRQ_MASK) | ch->irq_mask);
@@ -627,9 +626,9 @@ xonar_chan_trigger(kobj_t obj, void *data, int go)
 	case PCMTRIG_ABORT:
 	case PCMTRIG_STOP:
 		DEB(device_printf(sc->dev, "trigger stop\n"));
-		if (!(ch->state & CHAN_STATE_ACTIVE))
+		if (!(ch->state == CHAN_STATE_ACTIVE))
 			break;
-		ch->state &= ~CHAN_STATE_ACTIVE;
+		ch->state = CHAN_STATE_INACTIVE;
 		/* disable dma */
 		cmi8788_write_2(sc, DMA_START,
 				cmi8788_read_2(sc, DMA_START) & ~ch->dma_start);
@@ -651,7 +650,7 @@ xonar_chan_setblocksize(kobj_t obj, void *data, u_int32_t blocksize)
 
 	if (ch->blksz != blocksize) {
 		ch->blksz = blocksize;
-		ch->state |= CHAN_STATE_INIT;
+		ch->state = CHAN_STATE_INIT;
 	}
 	return blocksize;
 }
@@ -1013,7 +1012,7 @@ chan_reset_buf(struct xonar_chinfo *ch)
 out:
 	sndbuf_destroy(b);
 	sndbuf_destroy(bs);
-	ch->state |= CHAN_STATE_INVALID;
+	ch->state = CHAN_STATE_INVALID;
 	return 1;
 }
 
@@ -1037,12 +1036,12 @@ sysctl_xonar_buffersize(SYSCTL_HANDLER_ARGS)
 	if ((val < 2048) || (val > sc->bufmaxsz))
 		return (EINVAL);
 	ch = &sc->chan[0];
-	if (ch->state & CHAN_STATE_ACTIVE)
+	if (ch->state == CHAN_STATE_ACTIVE)
 		return EBUSY;
 	if (val != sc->bufsz) {
 		obufsz = sc->bufsz;
 		sc->bufsz = 2048*(val/2048);
-		ch->state |= CHAN_STATE_INIT;
+		ch->state = CHAN_STATE_INIT;
 		if (chan_reset_buf(ch)) {
 			sc->bufsz = obufsz;
 			return EINVAL;
@@ -1151,11 +1150,7 @@ xonar_intr(void *p) {
 
     for (i=0; i < MAX_PORT_PLAY+MAX_PORT_REC; i++) {
         ch = &(sc->chan[i]);
-        if (! (ch->state)) continue;
-
-        if ((intstat & ch->irq_mask)) {
-            if (!(ch->state & CHAN_STATE_ACTIVE))
-                return;
+        if ((ch->state == CHAN_STATE_ACTIVE) && (intstat & ch->irq_mask)) {
             /* Acknowledge the interrupt by disabling and enabling the irq */
             cmi8788_write_2(sc, IRQ_MASK,
                             cmi8788_read_2(sc, IRQ_MASK) & ~ch->irq_mask);
