@@ -29,8 +29,7 @@
 #define MAX_PORTS_REC       1
 
 #define CHAN_STATE_INIT 	0x1
-#define CHAN_STATE_PLAY 	0x2
-#define CHAN_STATE_RECORD 	0x4
+#define CHAN_STATE_ACTIVE 	0x2
 #define CHAN_STATE_INVALID 	0x8
 
 #define OUTPUT_LINE 		0
@@ -53,8 +52,8 @@ struct xonar_chinfo {
 	u_int32_t		fmt, spd, phys_buf, bps;
 	int 			adc_type;
 	int 			dac_type;
-	int 			play_dma_start;
-	int 			play_irq_mask;
+	int 			dma_start;
+	int 			irq_mask;
 	int 			state;
 	int 			blksz;
 };
@@ -464,8 +463,8 @@ xonar_prepare_output(struct xonar_chinfo *ch)
 
 	switch (ch->dac_type) {
 	case 1:
-		ch->play_dma_start = CHANNEL_MULTICH;
-		ch->play_irq_mask = CHANNEL_MULTICH;
+		ch->dma_start = CHANNEL_MULTICH;
+		ch->irq_mask = CHANNEL_MULTICH;
 		xonar_chan_reset(ch, CHANNEL_MULTICH);
 
 		int channels;
@@ -531,33 +530,33 @@ xonar_chan_trigger(kobj_t obj, void *data, int go)
 		DEB(device_printf(sc->dev, "trigger start\n"));
 		DEB(device_printf(sc->dev, "bufsz = %d\n", (int)sc->bufsz));
 		DEB(device_printf(sc->dev, "chan state = 0x%x\n", ch->state));
-		if (ch->state & CHAN_STATE_PLAY)
+		if (ch->state & CHAN_STATE_ACTIVE)
 			break;
 		if (ch->state == CHAN_STATE_INIT) {
 			xonar_prepare_output(ch);
 			ch->state &= ~CHAN_STATE_INIT;
 		}
-		ch->state |= CHAN_STATE_PLAY;
+		ch->state |= CHAN_STATE_ACTIVE;
 		/* enable irq */
 		cmi8788_write_2(sc, IRQ_MASK,
-				cmi8788_read_2(sc, IRQ_MASK) | ch->play_irq_mask);
+				cmi8788_read_2(sc, IRQ_MASK) | ch->irq_mask);
 		/* enable dma */
 		cmi8788_write_2(sc, DMA_START,
-				cmi8788_read_2(sc, DMA_START) | ch->play_dma_start);
+				cmi8788_read_2(sc, DMA_START) | ch->dma_start);
 		break;
 
 	case PCMTRIG_ABORT:
 	case PCMTRIG_STOP:
 		DEB(device_printf(sc->dev, "trigger stop\n"));
-		if (!(ch->state & CHAN_STATE_PLAY))
+		if (!(ch->state & CHAN_STATE_ACTIVE))
 			break;
-		ch->state &= ~CHAN_STATE_PLAY;
+		ch->state &= ~CHAN_STATE_ACTIVE;
 		/* disable dma */
 		cmi8788_write_2(sc, DMA_START,
-				cmi8788_read_2(sc, DMA_START) & ~ch->play_dma_start);
+				cmi8788_read_2(sc, DMA_START) & ~ch->dma_start);
 		/* disable irq */
 		cmi8788_write_2(sc, IRQ_MASK,
-				cmi8788_read_2(sc, IRQ_MASK) & ~ch->play_irq_mask);
+				cmi8788_read_2(sc, IRQ_MASK) & ~ch->irq_mask);
 		break;
 	default:
 		break;
@@ -936,7 +935,7 @@ sysctl_xonar_buffersize(SYSCTL_HANDLER_ARGS)
 	if ((val < 2048) || (val > sc->bufmaxsz))
 		return (EINVAL);
 	ch = &sc->chan[0];
-	if (ch->state & CHAN_STATE_PLAY)
+	if (ch->state & CHAN_STATE_ACTIVE)
 		return EBUSY;
 	if (val != sc->bufsz) {
 		obufsz = sc->bufsz;
@@ -1047,14 +1046,14 @@ xonar_intr(void *p) {
 	ch = &sc->chan[0];
 	if ((intstat = cmi8788_read_2(sc, IRQ_STAT)) == 0)
 		return;
-	if ((intstat & ch->play_irq_mask)) {
-		if (!(ch->state & CHAN_STATE_PLAY))
+	if ((intstat & ch->irq_mask)) {
+		if (!(ch->state & CHAN_STATE_ACTIVE))
 			return;
 		/* Acknowledge the interrupt by disabling and enabling the irq */
 		cmi8788_write_2(sc, IRQ_MASK,
-				cmi8788_read_2(sc, IRQ_MASK) & ~ch->play_irq_mask);
+				cmi8788_read_2(sc, IRQ_MASK) & ~ch->irq_mask);
 		cmi8788_write_2(sc, IRQ_MASK,
-				cmi8788_read_2(sc, IRQ_MASK) | ch->play_irq_mask);
+				cmi8788_read_2(sc, IRQ_MASK) | ch->irq_mask);
 		chn_intr(ch->channel);
 	}
 }
