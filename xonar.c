@@ -25,7 +25,8 @@
 #include "xonar.h"
 #include "xonar_compat.h"
 
-#define MAX_PORTC 		4
+#define MAX_PORTS_PLAY 		1
+#define MAX_PORTS_REC       1
 
 #define CHAN_STATE_INIT 	0x1
 #define CHAN_STATE_PLAY 	0x2
@@ -54,7 +55,6 @@ struct xonar_chinfo {
 	int 			dac_type;
 	int 			play_dma_start;
 	int 			play_irq_mask;
-	int 			play_chan_reset;
 	int 			state;
 	int 			blksz;
 };
@@ -87,7 +87,7 @@ struct xonar_info {
 	int bufmaxsz, bufsz;
 	int pnum;
 	struct pcm1796_info pcm1796;
-	struct xonar_chinfo chan[MAX_PORTC];
+	struct xonar_chinfo chan[MAX_PORTS_PLAY+MAX_PORTS_REC];
 
 	int anti_pop_delay;
 	int output_control_gpio;
@@ -272,22 +272,18 @@ pcm1796_set_bypass(struct xonar_info *sc, int bypass)
 }
 
 static void 
-xonar_chan_reset(struct xonar_chinfo *ch, int direction)
+xonar_chan_reset(struct xonar_chinfo *ch, uint8_t which)
 {
 	struct xonar_info *sc = ch->parent;
 
-	switch (direction) {
-	case PCMDIR_PLAY:
-		cmi8788_write_1(sc, CHAN_RESET,
-				cmi8788_read_1(sc, CHAN_RESET) |
-				ch->play_chan_reset);
+    cmi8788_write_1(sc, CHAN_RESET,
+                    cmi8788_read_1(sc, CHAN_RESET) |
+                    which);
 
-		DELAY(10);
-		cmi8788_write_1(sc, CHAN_RESET,
-				cmi8788_read_1(sc, CHAN_RESET) &
-				~ch->play_chan_reset);
-		break;
-	}
+    DELAY(10);
+    cmi8788_write_1(sc, CHAN_RESET,
+                    cmi8788_read_1(sc, CHAN_RESET) &
+                    ~which);
 }
 
 static int
@@ -470,8 +466,7 @@ xonar_prepare_output(struct xonar_chinfo *ch)
 	case 1:
 		ch->play_dma_start = CHANNEL_MULTICH;
 		ch->play_irq_mask = CHANNEL_MULTICH;
-		ch->play_chan_reset = CHANNEL_MULTICH;
-		xonar_chan_reset(ch, PCMDIR_PLAY);
+		xonar_chan_reset(ch, CHANNEL_MULTICH);
 
 		int channels;
 		switch (AFMT_CHANNEL(ch->fmt)) {
@@ -1132,10 +1127,10 @@ xonar_attach(device_t dev)
 	if (mixer_init(dev, &xonar_mixer_class, sc))
 		goto bad;
 
-	if (pcm_register(dev, sc, 1 /* MAX_PORTC */, 0))
+	if (pcm_register(dev, sc, MAX_PORTS_PLAY, 0))
 		goto bad;
 
-	for(int i = 0; i < 1 /* MAX_PORTC */; i++) {
+	for(int i = 0; i < MAX_PORTS_PLAY; i++) {
 		pcm_addchan(dev, PCMDIR_PLAY, &xonar_chan_class, sc);
 		sc->pnum++;
 	}
