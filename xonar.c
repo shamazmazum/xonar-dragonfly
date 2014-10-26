@@ -72,7 +72,6 @@ struct xonar_info {
 	device_t dev;
 	struct mtx *lock;
 
-	int 			output;
 	struct resource *reg, *irq;
 	int regtype, regid, irqid;
 
@@ -750,38 +749,59 @@ cmi8788_toggle_sound(struct xonar_info *sc, int output) {
 	}
 }
 
+/*
+ * GPIO1 - front (0) or rear (1) HP jack
+ * GPIO7 - speakers (0) or HP (1)
+ */
 static void
 cmi8788_set_output(struct xonar_info *sc, int which)
 {
 	uint16_t val;
 
     snd_mtxlock(sc->lock);
-	cmi8788_toggle_sound(sc, 0);
-	switch (sc->model) {
-	case SUBID_XONAR_ST:
-	case SUBID_XONAR_STX:
-		/*
-		 * GPIO1 - front (0) or rear (1) HP jack
-		 * GPIO7 - speakers (0) or HP (1)
-		 */
-		val = cmi8788_read_2(sc, GPIO_DATA);
-		switch (which) {
-		case OUTPUT_LINE:
-			val &= ~(GPIO_PIN7|GPIO_PIN1);
-			break;
-		case OUTPUT_REAR_HP:
-			val |= (GPIO_PIN7|GPIO_PIN1);
-			break;
-		case OUTPUT_HP:
-			val |= GPIO_PIN7;
-			val &= ~GPIO_PIN1;
-			break;
-		}
-		cmi8788_write_2(sc, GPIO_DATA, val);
-		break;
-	}
-	cmi8788_toggle_sound(sc, 1);
+    cmi8788_toggle_sound(sc, 0);
+    switch (sc->model) {
+    case SUBID_XONAR_ST:
+    case SUBID_XONAR_STX:
+        val = cmi8788_read_2(sc, GPIO_DATA);
+        switch (which) {
+        case OUTPUT_LINE:
+            val &= ~(GPIO_PIN7|GPIO_PIN1);
+            break;
+        case OUTPUT_REAR_HP:
+            val |= (GPIO_PIN7|GPIO_PIN1);
+            break;
+        case OUTPUT_HP:
+            val |= GPIO_PIN7;
+            val &= ~GPIO_PIN1;
+            break;
+        }
+        cmi8788_write_2(sc, GPIO_DATA, val);
+        break;
+    }
+    cmi8788_toggle_sound(sc, 1);
     snd_mtxunlock(sc->lock);
+}
+
+static int
+cmi8788_get_output(struct xonar_info *sc)
+{
+    uint16_t val;
+    int res = -1;
+
+    snd_mtxlock(sc->lock);
+    switch (sc->model) {
+    case SUBID_XONAR_ST:
+    case SUBID_XONAR_STX:
+        val = cmi8788_read_2(sc, GPIO_DATA);
+        if (!(val & GPIO_PIN7)) res = OUTPUT_LINE;
+        else if (! (val & GPIO_PIN1)) res = OUTPUT_HP;
+        else res = OUTPUT_REAR_HP;
+        break;
+    }
+    snd_mtxunlock(sc->lock);
+
+    return res;
 }
 
 static int
@@ -1061,14 +1081,15 @@ sysctl_xonar_output(SYSCTL_HANDLER_ARGS)
 	sc = pcm_getdevinfo(dev);
 	if (sc == NULL)
 		return EINVAL;
-	val = sc->output;
+	val = cmi8788_get_output (sc);
+    if (val < 0)
+        return EINVAL;
 	err = sysctl_handle_int(oidp, &val, 0, req);
 	if (err || req->newptr == NULL)
 		return (err);
 	if (val < 0 || val > 2)
 		return (EINVAL);
 	cmi8788_set_output(sc, val);
-	sc->output = val;
 	return err;
 }
 
@@ -1292,9 +1313,6 @@ xonar_detach(device_t dev)
 	r = pcm_unregister(dev);
 	if (r)
 		return r;
-
-	/* we expect it to be OUTPUT_LINE on attach */
-	cmi8788_set_output(sc, OUTPUT_LINE);
 
 	xonar_cleanup(sc);
 	return (0);
