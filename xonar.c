@@ -1148,7 +1148,7 @@ xonar_intr(void *p) {
     if ((intstat = cmi8788_read_2(sc, IRQ_STAT)) == 0)
 		return;
 
-    for (i=0; i < MAX_PORT_PLAY+MAX_PORT_REC; i++) {
+    for (i=0; i < MAX_PORTS_PLAY+MAX_PORTS_REC; i++) {
         ch = &(sc->chan[i]);
         if ((ch->state == CHAN_STATE_ACTIVE) && (intstat & ch->irq_mask)) {
             /* Acknowledge the interrupt by disabling and enabling the irq */
