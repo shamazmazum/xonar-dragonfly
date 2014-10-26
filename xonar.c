@@ -788,10 +788,33 @@ cmi8788_toggle_sound(struct xonar_info *sc, int output) {
 	}
 }
 
-/*
- * GPIO1 - front (0) or rear (1) HP jack
- * GPIO7 - speakers (0) or HP (1)
- */
+/* Bits in monitor register are not clear for me,
+   but I think it is enough to set it to 0xf */
+static void
+cmi8788_set_rec_monitor(struct xonar_info *sc, int set)
+{
+    snd_mtxlock(sc->lock);
+    if (set)
+        cmi8788_write_1(sc, REC_MONITOR,
+                        cmi8788_read_1 (sc, REC_MONITOR) |
+                        0x0f);
+    else
+        cmi8788_write_1(sc, REC_MONITOR,
+                        cmi8788_read_1 (sc, REC_MONITOR) &
+                        ~0x0f);
+    snd_mtxunlock(sc->lock);
+}
+
+static int
+cmi8788_get_rec_monitor(struct xonar_info *sc)
+{
+    int res;
+    snd_mtxlock(sc->lock);
+    res = (cmi8788_read_1 (sc, REC_MONITOR) & 0x0f) ? 1: 0;
+    snd_mtxunlock(sc->lock);
+    return res;
+}
+
 static void
 cmi8788_set_output(struct xonar_info *sc, int which)
 {
@@ -802,6 +825,10 @@ cmi8788_set_output(struct xonar_info *sc, int which)
     switch (sc->model) {
     case SUBID_XONAR_ST:
     case SUBID_XONAR_STX:
+        /*
+         * GPIO1 - front (0) or rear (1) HP jack
+         * GPIO7 - speakers (0) or HP (1)
+         */
         val = cmi8788_read_2(sc, GPIO_DATA);
         switch (which) {
         case OUTPUT_LINE:
@@ -1110,6 +1137,27 @@ sysctl_xonar_buffersize(SYSCTL_HANDLER_ARGS)
 }
 
 static int
+sysctl_xonar_rec_monitor(SYSCTL_HANDLER_ARGS)
+{
+	struct xonar_info *sc;
+	device_t dev;
+	int val, err;
+
+	dev = oidp->oid_arg1;
+	sc = pcm_getdevinfo(dev);
+	if (sc == NULL)
+		return EINVAL;
+	val = cmi8788_get_rec_monitor (sc);
+	err = sysctl_handle_int(oidp, &val, 0, req);
+	if (err || req->newptr == NULL)
+		return (err);
+	if (val < 0 || val > 1)
+		return (EINVAL);
+	cmi8788_set_rec_monitor(sc, val);
+	return err;
+}
+
+static int
 sysctl_xonar_output(SYSCTL_HANDLER_ARGS) 
 {
 	struct xonar_info *sc;
@@ -1332,6 +1380,11 @@ xonar_attach(device_t dev)
 			"dfbypass", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY, sc->dev,
 			sizeof(sc->dev), sysctl_xonar_bypass, "I",
 			"Set digital filter bypass: 0 - disabled, 1 - enabled");
+    SYSCTL_ADD_PROC(kern_sysctl_ctx(sc->dev),
+			SYSCTL_CHILDREN(kern_sysctl_tree(sc->dev)), OID_AUTO,
+			"monitor", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY, sc->dev,
+			sizeof(sc->dev), sysctl_xonar_rec_monitor, "I",
+			"Enable recording monitor");
 
 	return (0);
 bad:
