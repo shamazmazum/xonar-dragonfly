@@ -78,7 +78,7 @@ struct xonar_info {
 	void *ih;
 	bus_space_tag_t st;
 	bus_space_handle_t sh;
-	bus_dma_tag_t	dmat;
+	bus_dma_tag_t	dmats[2];
 
 	uint16_t model;
 
@@ -348,8 +348,10 @@ xonar_chan_init(kobj_t obj, void *devinfo,
 {
 	struct xonar_info *sc = devinfo;
 	struct xonar_chinfo *ch;
+    int offset = (dir == PCMDIR_PLAY) ? 0 : MAX_PORTS_PLAY;
+    bus_dma_tag_t dmat = (dir == PCMDIR_PLAY) ? sc->dmats[0] : sc->dmats[1];
 
-	ch = &sc->chan[sc->pnum];
+	ch = &sc->chan[sc->pnum+offset];
 	ch->buffer = b;
 	ch->parent = sc;
 	ch->channel = c;
@@ -388,7 +390,7 @@ xonar_chan_init(kobj_t obj, void *devinfo,
 		break;
 	}
 	if (sc->pnum == 0) {
-		if (pcm_sndbuf_alloc(ch->buffer, sc->dmat, 0, sc->bufsz) != 0) {
+		if (pcm_sndbuf_alloc(ch->buffer, dmat, 0, sc->bufsz) != 0) {
 			device_printf(sc->dev, "Cannot allocate sndbuf\n");
 			return NULL;
 		}
@@ -412,16 +414,46 @@ xonar_chan_getcaps(kobj_t obj, void *data)
 static u_int32_t
 xonar_chan_setspeed(kobj_t obj, void *data, u_int32_t speed)
 {
+#define GPIO_CS53x1_M_MASK	0x000c
+#define GPIO_CS53x1_M_SINGLE	0x0000
+#define GPIO_CS53x1_M_DOUBLE	0x0004
+#define GPIO_CS53x1_M_QUAD	0x0008
 	struct xonar_chinfo *ch = data;
 	struct xonar_info *sc = ch->parent;
-	int i2s_rate;
+	int i2s_rate, i2s_rate_where, cs53x1_value;
 
 	i2s_rate = i2s_get_rate(speed);
-	cmi8788_write_1(sc, I2S_MULTICH_FORMAT,
-			(cmi8788_read_1(sc, I2S_MULTICH_FORMAT) &
-			 ~I2S_FMT_RATE_MASK) | i2s_rate);
-	ch->spd = speed;
-	return speed;
+    i2s_rate_where = 0;
+    switch (ch->dir) {
+    case PCMDIR_PLAY:
+        i2s_rate_where = I2S_MULTICH_FORMAT;
+        break;
+    case PCMDIR_REC:
+        switch (ch->adc_type) {
+        case 1:
+            i2s_rate_where = I2S_ADC1_FORMAT;
+            break;
+        case 2:
+            i2s_rate_where = I2S_ADC2_FORMAT;
+            break;
+        }
+
+        if (speed <= 54000) cs53x1_value = GPIO_CS53x1_M_SINGLE;
+        else if (speed <= 108000) cs53x1_value = GPIO_CS53x1_M_DOUBLE;
+        else cs53x1_value = GPIO_CS53x1_M_QUAD;
+        cmi8788_write_2(sc, GPIO_DATA,
+                        (cmi8788_read_2(sc, GPIO_DATA) &
+                         ~GPIO_CS53x1_M_MASK) | cs53x1_value);
+        break;
+    }
+
+    if (i2s_rate_where) {
+        ch->spd = speed;
+        cmi8788_write_1(sc, i2s_rate_where,
+                        (cmi8788_read_1(sc, i2s_rate_where) &
+                         ~I2S_FMT_RATE_MASK) | i2s_rate);
+    }
+	return ch->spd;
 }
 
 static int
@@ -429,12 +461,12 @@ xonar_chan_setformat(kobj_t obj, void *data, u_int32_t format)
 {
 	struct xonar_chinfo *ch = data;
 	struct xonar_info *sc = ch->parent;
-	int bits;
+	int bits, bits_where;
+    bits_where = 0;
 
 	DEB(device_printf(sc->dev, "%s %dbits %dchans\n", __func__, AFMT_BIT(format),
 					  AFMT_CHANNEL(format)));
 
-	ch->fmt = format;
 	if (format & AFMT_S32_LE)
 		bits = 8;
 	else if (format & AFMT_S16_LE)
@@ -445,17 +477,62 @@ xonar_chan_setformat(kobj_t obj, void *data, u_int32_t format)
 		kern_printf("format unknown\n");
 		return 1;
 	}
-	ch->bps = bits;
-	/* set the format bits in play format register */
-	cmi8788_write_1(sc, PLAY_FORMAT,
-			(cmi8788_read_1(sc, PLAY_FORMAT) &
-			 ~MULTICH_FORMAT_MASK) | bits);
+
+    switch (ch->dir) {
+    case PCMDIR_PLAY:
+        bits_where = PLAY_FORMAT;
+        break;
+    case PCMDIR_REC:
+        bits_where = REC_FORMAT;
+        break;
+    }
+
+    if (bits_where) {
+        ch->fmt = format;
+        ch->bps = bits;
+
+        cmi8788_write_1(sc, bits_where,
+                        (cmi8788_read_1(sc, bits_where) &
+                         ~MULTICH_FORMAT_MASK) | bits);
+    }
 
 	return 0;
 }
 
 static void
-xonar_prepare_output(struct xonar_chinfo *ch) 
+xonar_prepare_input(struct xonar_chinfo *ch)
+{
+	struct xonar_info *sc = ch->parent;
+	int i2s_bits;
+	uint32_t addr = sndbuf_getbufaddr(ch->buffer);
+
+	switch (ch->adc_type) {
+	case 2:
+		ch->dma_start = 0x2;
+		ch->irq_mask = 0x2;
+		xonar_chan_reset(ch, 0x2);
+
+		DEB(device_printf(sc->dev, "buffer addr = 0x%x size = %d\n",
+						  addr, sndbuf_getsize(ch->buffer)));
+
+		cmi8788_write_4(sc, RECB_ADDR, addr);
+		cmi8788_write_2(sc, RECB_SIZE, sc->bufsz / 4 - 1);
+		cmi8788_write_2(sc, RECB_FRAG, 1024 / 4 /* XXX */ - 1);
+
+        /* Vasily: Should we move it to xonar_set_format? */
+		/* setup i2s bits in the i2s register */
+		i2s_bits = i2s_get_bits (ch->fmt);
+		cmi8788_write_1(sc, I2S_ADC2_FORMAT,
+				(cmi8788_read_1(sc, I2S_ADC2_FORMAT) &
+				 ~I2S_BITS_MASK) | i2s_bits);
+		break;
+	default:
+		break;
+	}
+}
+
+static void
+xonar_prepare_output(struct xonar_chinfo *ch)
 {
 	struct xonar_info *sc = ch->parent;
 	int i2s_bits;
@@ -501,7 +578,7 @@ xonar_prepare_output(struct xonar_chinfo *ch)
 				 ~MULTICH_MODE_CH_MASK) | channels);
 
 		/* setup i2s bits in the i2s register */
-		i2s_bits = i2s_get_bits (ch->bps);
+		i2s_bits = i2s_get_bits (ch->fmt);
 		cmi8788_write_1(sc, I2S_MULTICH_FORMAT,
 				(cmi8788_read_1(sc, I2S_MULTICH_FORMAT) &
 				 ~I2S_BITS_MASK) | i2s_bits);
@@ -517,6 +594,8 @@ xonar_chan_trigger(kobj_t obj, void *data, int go)
 {
 	struct xonar_chinfo *ch = data;
 	struct xonar_info *sc = ch->parent;
+    void (*prepare_func) (struct xonar_chinfo*) =
+        (ch->dir == PCMDIR_PLAY) ? xonar_prepare_output : xonar_prepare_input;
 
 	if (!PCMTRIG_COMMON(go))
 		return 0;
@@ -533,7 +612,7 @@ xonar_chan_trigger(kobj_t obj, void *data, int go)
 		if (ch->state & CHAN_STATE_ACTIVE)
 			break;
 		if (ch->state == CHAN_STATE_INIT) {
-			xonar_prepare_output(ch);
+            prepare_func (ch);
 			ch->state &= ~CHAN_STATE_INIT;
 		}
 		ch->state |= CHAN_STATE_ACTIVE;
@@ -582,15 +661,26 @@ xonar_chan_getptr(kobj_t obj, void *data)
 {
 	struct xonar_chinfo *ch = data;
 	struct xonar_info *sc = ch->parent;
-	u_int32_t ptr = 0;
+    int reg = 0;
 
-	if (ch->dir == PCMDIR_PLAY) {
+	switch (ch->dir) {
+    case PCMDIR_PLAY:
 		switch (ch->dac_type) {
 		case 1:
-			ptr = cmi8788_read_4(sc, MULTICH_ADDR);
+			reg = MULTICH_ADDR;
+            break;
 		}
+        break;
+    case PCMDIR_REC:
+        switch (ch->adc_type) {
+		case 2:
+			reg = RECB_ADDR;
+            break;
+		}
+        break;
 	}
-	return ptr;
+    if (reg) return cmi8788_read_4(sc, reg);
+    else return 0;
 }
 
 static kobj_method_t xonar_chan_methods[] = {
@@ -802,7 +892,15 @@ xonar_init(struct xonar_info *sc)
 
 		cmi8788_write_2(sc, GPIO_DATA,
 				cmi8788_read_2(sc, GPIO_DATA) |
-				GPIO_PIN0 | GPIO_PIN8);
+				GPIO_PIN0);
+
+        cmi8788_write_2(sc, GPIO_DATA,
+				cmi8788_read_2(sc, GPIO_DATA) &
+				~GPIO_PIN8);
+
+        cmi8788_write_2(sc, I2C_CTRL,
+				cmi8788_read_2(sc, I2C_CTRL) |
+				TWOWIRE_SPEED_FAST);
 
         /* FIXME:
          * Confusing naming. Invokations of the following functions
@@ -837,10 +935,14 @@ xonar_init(struct xonar_info *sc)
 static void
 xonar_cleanup(struct xonar_info *sc)
 {
-	if (sc->dmat) {
-		bus_dma_tag_destroy(sc->dmat);
-		sc->dmat = NULL;
-	}
+    int i;
+
+    for (i=0; i<2; i++) {
+        if (sc->dmats[i]) {
+            bus_dma_tag_destroy(sc->dmats[i]);
+            sc->dmats[i] = NULL;
+        }
+    }
 	if (sc->ih) {
 		bus_teardown_intr(sc->dev, sc->irq, sc->ih);
 		sc->ih = NULL;
@@ -883,7 +985,7 @@ chan_reset_buf(struct xonar_chinfo *ch)
 			c->bufhard, b, c->bufsoft, bs);
 	sndbuf_destroy(c->bufsoft);
 	sndbuf_destroy(c->bufhard);
-	if (pcm_sndbuf_alloc(b, sc->dmat, 0, sc->bufsz) != 0) {
+	if (pcm_sndbuf_alloc(b, sc->dmats[0], 0, sc->bufsz) != 0) {
 		kern_printf("failed\n");
 		device_printf(sc->dev, "Cannot allocate sndbuf\n");
 		goto out;
@@ -1042,20 +1144,26 @@ xonar_intr(void *p) {
 	struct xonar_info *sc = p;
 	struct xonar_chinfo *ch;
 	unsigned int intstat;
+    int i;
 
-	ch = &sc->chan[0];
-	if ((intstat = cmi8788_read_2(sc, IRQ_STAT)) == 0)
+    if ((intstat = cmi8788_read_2(sc, IRQ_STAT)) == 0)
 		return;
-	if ((intstat & ch->irq_mask)) {
-		if (!(ch->state & CHAN_STATE_ACTIVE))
-			return;
-		/* Acknowledge the interrupt by disabling and enabling the irq */
-		cmi8788_write_2(sc, IRQ_MASK,
-				cmi8788_read_2(sc, IRQ_MASK) & ~ch->irq_mask);
-		cmi8788_write_2(sc, IRQ_MASK,
-				cmi8788_read_2(sc, IRQ_MASK) | ch->irq_mask);
-		chn_intr(ch->channel);
-	}
+
+    for (i=0; i < MAX_PORT_PLAY+MAX_PORT_REC; i++) {
+        ch = &(sc->chan[i]);
+        if (! (ch->state)) continue;
+
+        if ((intstat & ch->irq_mask)) {
+            if (!(ch->state & CHAN_STATE_ACTIVE))
+                return;
+            /* Acknowledge the interrupt by disabling and enabling the irq */
+            cmi8788_write_2(sc, IRQ_MASK,
+                            cmi8788_read_2(sc, IRQ_MASK) & ~ch->irq_mask);
+            cmi8788_write_2(sc, IRQ_MASK,
+                            cmi8788_read_2(sc, IRQ_MASK) | ch->irq_mask);
+            chn_intr(ch->channel);
+        }
+    }
 }
 
 /* device interface */
@@ -1085,6 +1193,7 @@ xonar_attach(device_t dev)
 {
 	struct xonar_info *sc;
 	char status[SND_STATUSLEN];
+    int i;
 
 	sc = kern_malloc(sizeof(*sc), M_DEVBUF, M_WAITOK | M_ZERO);
 	sc->lock = snd_mtxcreate(device_get_nameunit(dev), "snd_cmi8788 softc");
@@ -1118,10 +1227,12 @@ xonar_attach(device_t dev)
 	}
 
 	sc->bufmaxsz = sc->bufsz = pcm_getbuffersize(dev, 2048, DEFAULT_BUFFER_BYTES_MULTICH, 65536);
-	if (xonar_create_dma_tag(&sc->dmat, sc->bufsz, bus_get_dma_tag(dev), sc->lock) != 0) {
-		device_printf(sc->dev, "unable to create dma tag\n");
-		return (ENOMEM);
-	}
+    for (i=0; i<2; i++) {
+        if (xonar_create_dma_tag(&(sc->dmats[i]), sc->bufsz, bus_get_dma_tag(dev), sc->lock) != 0) {
+            device_printf(sc->dev, "unable to create dma tag\n");
+            return (ENOMEM);
+        }
+    }
 
 	if (mixer_init(dev, &xonar_mixer_class, sc))
 		goto bad;
