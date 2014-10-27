@@ -18,15 +18,12 @@
 
 #include <sys/param.h>
 #include <sys/kernel.h>
-#include <sys/bus.h>
 #include <sys/module.h>
 
 #include "mixer_if.h"
 #include "xonar.h"
 #include "xonar_compat.h"
-
-#define MAX_PORTS_PLAY 		1
-#define MAX_PORTS_REC       1
+#include "xonar_io.h"
 
 #define CHAN_STATE_INIT 	0
 #define CHAN_STATE_ACTIVE 	1
@@ -42,52 +39,6 @@
 #define AFMT_BIT(fmt) 16
 #define AFMT_CHANNEL(fmt) 2
 #endif
-
-struct xonar_info;
-
-struct xonar_chinfo {
-	struct snd_dbuf		*buffer;
-	struct pcm_channel 	*channel;
-	struct xonar_info 	*parent;
-	int			dir;
-	u_int32_t		fmt, spd, phys_buf, bps;
-	int 			adc_type;
-	int 			dac_type;
-	int 			dma_start;
-	int 			irq_mask;
-	int 			state;
-	int 			blksz;
-};
-
-struct pcm1796_info {
-	u_int16_t 	regs[PCM1796_NREGS];
-	int 		hp;
-	int 		hp_gain;
-};
-
-struct xonar_info {
-	device_t dev;
-	struct mtx *lock;
-
-	struct resource *reg, *irq;
-	int regtype, regid, irqid;
-
-	void *ih;
-	bus_space_tag_t st;
-	bus_space_handle_t sh;
-	bus_dma_tag_t	dmats[2];
-
-	uint16_t model;
-
-	int vol[2];
-	int bufmaxsz, bufsz;
-	int pnum;
-	struct pcm1796_info pcm1796;
-	struct xonar_chinfo chan[MAX_PORTS_PLAY+MAX_PORTS_REC];
-
-	int anti_pop_delay;
-	int output_control_gpio;
-};
 
 static int xonar_init(struct xonar_info *);
 static void xonar_cleanup(struct xonar_info *);
@@ -127,81 +78,11 @@ static u_int32_t xonar_fmt[] = {
 
 static struct pcmchan_caps xonar_caps = { 32000, 192000, xonar_fmt, 0 };
 
-/* C-Media CMI8788 interface */
-static void
-cmi8788_write_4(struct xonar_info *sc, int reg, u_int32_t data)
+/* ST/STX only. Do we have pcm1796 in other cards? */
+static void pcm1796_write (struct xonar_info *sc, uint8_t reg, uint8_t data)
 {
-	bus_space_write_4(sc->st, sc->sh, reg, data);
-}
-
-static void
-cmi8788_write_1(struct xonar_info *sc, int reg, u_int8_t data)
-{
-	bus_space_write_1(sc->st, sc->sh, reg, data);
-}
-
-static void
-cmi8788_write_2(struct xonar_info *sc, int reg, u_int16_t data)
-{
-	bus_space_write_2(sc->st, sc->sh, reg, data);
-}
-
-static u_int32_t
-cmi8788_read_4(struct xonar_info *sc, int reg)
-{
-	return bus_space_read_4(sc->st, sc->sh, reg);
-}
-
-static u_int16_t
-cmi8788_read_2(struct xonar_info *sc, int reg)
-{
-	return bus_space_read_2(sc->st, sc->sh, reg);
-}
-
-static u_int8_t
-cmi8788_read_1(struct xonar_info *sc, int reg)
-{
-	return bus_space_read_1(sc->st, sc->sh, reg);
-}
-
-/* Texas Instruments PCM1796 interface */
-static int
-pcm1796_write_i2c(struct xonar_info *sc, uint8_t codec_num, uint8_t reg,
-		uint8_t data)
-{
-	int count = 50;
-
-	/* Wait for it to stop being busy */
-	while ((cmi8788_read_2(sc, I2C_CTRL) & TWOWIRE_BUSY) && (count > 0)) {
-		DELAY(10);
-		count--;
-	}
-	if (count == 0) {
-		device_printf(sc->dev, "i2c timeout\n");
-		return EIO;
-	}
-
-	/* first write the Register Address into the MAP register */
-	cmi8788_write_1(sc, I2C_MAP, reg);
-
-	/* now write the data */
-	cmi8788_write_1(sc, I2C_DATA, data);
-
-	/* select the codec number to address */
-	cmi8788_write_1(sc, I2C_ADDR, codec_num);
-	DELAY(100);
-
-	return 1;
-}
-
-static int
-pcm1796_write(struct xonar_info *sc, uint8_t codec_num, uint8_t reg,
-		uint8_t data) {
-	/*
-	 * XXX: add support for SPI
-	 */
-	sc->pcm1796.regs[reg - PCM1796_REGBASE] = data;
-	return pcm1796_write_i2c(sc, codec_num, reg, data);
+    uint8_t *sync_reg = &(sc->pcm1796.regs[reg - PCM1796_REGBASE]);
+    cmi8788_write_i2c (sc, XONAR_STX_FRONTDAC, reg, data, sync_reg);
 }
 
 static unsigned int
@@ -214,10 +95,8 @@ pcm1796_vol_scale(int vol)
 static void
 pcm1796_set_volume(struct xonar_info *sc, int left, int right)
 {
-	pcm1796_write(sc, XONAR_STX_FRONTDAC, 16,
-			pcm1796_vol_scale(left));
-	pcm1796_write(sc, XONAR_STX_FRONTDAC, 17,
-			pcm1796_vol_scale(right));
+    pcm1796_write(sc, 16, pcm1796_vol_scale(left));
+	pcm1796_write(sc, 17, pcm1796_vol_scale(right));
 }
 
 static void
@@ -226,11 +105,9 @@ pcm1796_set_mute(struct xonar_info *sc, int mute)
 	uint16_t reg = sc->pcm1796.regs[PCM1796_REG18];
 
 	if (mute)
-		pcm1796_write(sc, XONAR_STX_FRONTDAC,
-				18, reg | PCM1796_MUTE);
+		pcm1796_write(sc, 18, reg | PCM1796_MUTE);
 	else
-		pcm1796_write(sc, XONAR_STX_FRONTDAC,
-				18, reg & ~PCM1796_MUTE);
+		pcm1796_write(sc, 18, reg & ~PCM1796_MUTE);
 }
 
 static int
@@ -253,9 +130,9 @@ pcm1796_set_deemph(struct xonar_info *sc, int deemph)
     snd_mtxlock (sc->lock);
     reg = sc->pcm1796.regs[PCM1796_REG18];
 	if (deemph)
-		pcm1796_write(sc, XONAR_STX_FRONTDAC, 18, reg | PCM1796_DME);
+		pcm1796_write(sc, 18, reg | PCM1796_DME);
 	else
-		pcm1796_write(sc, XONAR_STX_FRONTDAC, 18, reg & ~PCM1796_DME);
+		pcm1796_write(sc, 18, reg & ~PCM1796_DME);
     snd_mtxunlock (sc->lock);
 }
 
@@ -278,9 +155,9 @@ pcm1796_set_rolloff(struct xonar_info *sc, int rolloff)
     snd_mtxlock (sc->lock);
     reg = sc->pcm1796.regs[PCM1796_REG19];
 	if (rolloff)
-		pcm1796_write(sc, XONAR_STX_FRONTDAC, 19, reg | PCM1796_FLT);
+		pcm1796_write(sc, 19, reg | PCM1796_FLT);
 	else
-		pcm1796_write(sc, XONAR_STX_FRONTDAC, 19, reg & ~PCM1796_FLT);
+		pcm1796_write(sc, 19, reg & ~PCM1796_FLT);
     snd_mtxunlock (sc->lock);
 }
 
@@ -303,9 +180,9 @@ pcm1796_set_bypass(struct xonar_info *sc, int bypass)
     snd_mtxlock (sc->lock);
     reg = sc->pcm1796.regs[PCM1796_REG20];
 	if (bypass) /* just disables sound */
-		pcm1796_write(sc, XONAR_STX_FRONTDAC, 20, reg | PCM1796_DFTH);
+		pcm1796_write(sc, 20, reg | PCM1796_DFTH);
 	else
-		pcm1796_write(sc, XONAR_STX_FRONTDAC, 20, reg & ~PCM1796_DFTH);
+		pcm1796_write(sc, 20, reg & ~PCM1796_DFTH);
     snd_mtxunlock (sc->lock);
 }
 
@@ -314,14 +191,9 @@ xonar_chan_reset(struct xonar_chinfo *ch, uint8_t which)
 {
 	struct xonar_info *sc = ch->parent;
 
-    cmi8788_write_1(sc, CHAN_RESET,
-                    cmi8788_read_1(sc, CHAN_RESET) |
-                    which);
-
+    cmi8788_setandclear_1 (sc, CHAN_RESET, which, 0);
     DELAY(10);
-    cmi8788_write_1(sc, CHAN_RESET,
-                    cmi8788_read_1(sc, CHAN_RESET) &
-                    ~which);
+    cmi8788_setandclear_1 (sc, CHAN_RESET, 0, which);
 }
 
 static int
@@ -416,8 +288,7 @@ xonar_chan_init(kobj_t obj, void *devinfo,
 				break;
 			default: 
 				ch->adc_type = 1;
-				cmi8788_write_1 (sc, REC_ROUTING,
-						cmi8788_read_1(sc, REC_ROUTING) | 0x18);
+                cmi8788_setandclear_1 (sc, REC_ROUTING, 0x18, 0);
 				break;
 		}
 		break;
@@ -480,17 +351,13 @@ xonar_chan_setspeed(kobj_t obj, void *data, u_int32_t speed)
         if (speed <= 54000) cs53x1_value = GPIO_CS53x1_M_SINGLE;
         else if (speed <= 108000) cs53x1_value = GPIO_CS53x1_M_DOUBLE;
         else cs53x1_value = GPIO_CS53x1_M_QUAD;
-        cmi8788_write_2(sc, GPIO_DATA,
-                        (cmi8788_read_2(sc, GPIO_DATA) &
-                         ~GPIO_CS53x1_M_MASK) | cs53x1_value);
+        cmi8788_setandclear_2(sc, GPIO_DATA, cs53x1_value, GPIO_CS53x1_M_MASK);
         break;
     }
 
     if (i2s_rate_where) {
         ch->spd = speed;
-        cmi8788_write_1(sc, i2s_rate_where,
-                        (cmi8788_read_1(sc, i2s_rate_where) &
-                         ~I2S_FMT_RATE_MASK) | i2s_rate);
+        cmi8788_setandclear_1 (sc, i2s_rate_where, i2s_rate, I2S_FMT_RATE_MASK);
     }
 	return ch->spd;
 }
@@ -529,10 +396,7 @@ xonar_chan_setformat(kobj_t obj, void *data, u_int32_t format)
     if (bits_where) {
         ch->fmt = format;
         ch->bps = bits;
-
-        cmi8788_write_1(sc, bits_where,
-                        (cmi8788_read_1(sc, bits_where) &
-                         ~MULTICH_FORMAT_MASK) | bits);
+        cmi8788_setandclear_1 (sc, bits_where, bits, MULTICH_FORMAT_MASK);
     }
 
 	return 0;
@@ -561,9 +425,7 @@ xonar_prepare_input(struct xonar_chinfo *ch)
         /* Vasily: Should we move it to xonar_set_format? */
 		/* setup i2s bits in the i2s register */
 		i2s_bits = i2s_get_bits (ch->fmt);
-		cmi8788_write_1(sc, I2S_ADC2_FORMAT,
-				(cmi8788_read_1(sc, I2S_ADC2_FORMAT) &
-				 ~I2S_BITS_MASK) | i2s_bits);
+        cmi8788_setandclear_1 (sc, I2S_ADC2_FORMAT, i2s_bits, I2S_BITS_MASK);
 		break;
 	default:
 		break;
@@ -612,16 +474,11 @@ xonar_prepare_output(struct xonar_chinfo *ch)
 		 */
 		cmi8788_write_4(sc, MULTICH_FRAG, 1024 / 4 /* XXX */ - 1);
 
-		cmi8788_write_1(sc, MULTICH_MODE, 
-				(cmi8788_read_1(sc, MULTICH_MODE) &
-				 ~MULTICH_MODE_CH_MASK) | channels);
+        cmi8788_setandclear_1 (sc, MULTICH_MODE, channels, MULTICH_MODE_CH_MASK);
 
 		/* setup i2s bits in the i2s register */
 		i2s_bits = i2s_get_bits (ch->fmt);
-		cmi8788_write_1(sc, I2S_MULTICH_FORMAT,
-				(cmi8788_read_1(sc, I2S_MULTICH_FORMAT) &
-				 ~I2S_BITS_MASK) | i2s_bits);
-
+        cmi8788_setandclear_1 (sc, I2S_MULTICH_FORMAT, i2s_bits, I2S_BITS_MASK);
 		break;
 	default:
 		break;
@@ -654,11 +511,9 @@ xonar_chan_trigger(kobj_t obj, void *data, int go)
             prepare_func (ch);
 		ch->state = CHAN_STATE_ACTIVE;
 		/* enable irq */
-		cmi8788_write_2(sc, IRQ_MASK,
-				cmi8788_read_2(sc, IRQ_MASK) | ch->irq_mask);
+        cmi8788_setandclear_2 (sc, IRQ_MASK, ch->irq_mask, 0);
 		/* enable dma */
-		cmi8788_write_2(sc, DMA_START,
-				cmi8788_read_2(sc, DMA_START) | ch->dma_start);
+        cmi8788_setandclear_2 (sc, DMA_START, ch->dma_start, 0);
 		break;
 
 	case PCMTRIG_ABORT:
@@ -668,11 +523,9 @@ xonar_chan_trigger(kobj_t obj, void *data, int go)
 			break;
 		ch->state = CHAN_STATE_INACTIVE;
 		/* disable dma */
-		cmi8788_write_2(sc, DMA_START,
-				cmi8788_read_2(sc, DMA_START) & ~ch->dma_start);
+        cmi8788_setandclear_2 (sc, DMA_START, 0, ch->dma_start);
 		/* disable irq */
-		cmi8788_write_2(sc, IRQ_MASK,
-				cmi8788_read_2(sc, IRQ_MASK) & ~ch->irq_mask);
+        cmi8788_setandclear_2 (sc, IRQ_MASK, 0, ch->irq_mask);
 		break;
 	default:
 		break;
@@ -768,22 +621,14 @@ MIXER_DECLARE(xonar_mixer);
 
 static void
 cmi8788_toggle_sound(struct xonar_info *sc, int output) {
-	uint16_t data, ctrl;
-
 	if (output) {
-		ctrl = cmi8788_read_2(sc, GPIO_CONTROL);
-		cmi8788_write_2(sc, GPIO_CONTROL,
-				ctrl | sc->output_control_gpio);
+        cmi8788_setandclear_2 (sc, GPIO_CONTROL, sc->output_control_gpio, 0);
 		tsleep (sc, 0, "apop", sc->anti_pop_delay);
-		data = cmi8788_read_2(sc, GPIO_DATA);
-		cmi8788_write_2(sc, GPIO_DATA,
-				data | sc->output_control_gpio);
+        cmi8788_setandclear_2 (sc, GPIO_DATA, sc->output_control_gpio, 0);
 	} else {
 		/* Mute DAC before toggle GPIO to avoid another pop */
 		pcm1796_set_mute (sc, 1);
-		data = cmi8788_read_2(sc, GPIO_DATA);
-		cmi8788_write_2(sc, GPIO_DATA,
-				data & ~sc->output_control_gpio);
+        cmi8788_setandclear_2 (sc, GPIO_DATA, 0, sc->output_control_gpio);
 		pcm1796_set_mute (sc, 0);
 	}
 }
@@ -794,14 +639,8 @@ static void
 cmi8788_set_rec_monitor(struct xonar_info *sc, int set)
 {
     snd_mtxlock(sc->lock);
-    if (set)
-        cmi8788_write_1(sc, REC_MONITOR,
-                        cmi8788_read_1 (sc, REC_MONITOR) |
-                        0x0f);
-    else
-        cmi8788_write_1(sc, REC_MONITOR,
-                        cmi8788_read_1 (sc, REC_MONITOR) &
-                        ~0x0f);
+    if (set) cmi8788_setandclear_1 (sc, REC_MONITOR, 0x0f, 0);
+    else cmi8788_setandclear_1 (sc, REC_MONITOR, 0, 0x0f);
     snd_mtxunlock(sc->lock);
 }
 
@@ -818,8 +657,6 @@ cmi8788_get_rec_monitor(struct xonar_info *sc)
 static void
 cmi8788_set_output(struct xonar_info *sc, int which)
 {
-	uint16_t val;
-
     snd_mtxlock(sc->lock);
     cmi8788_toggle_sound(sc, 0);
     switch (sc->model) {
@@ -829,20 +666,17 @@ cmi8788_set_output(struct xonar_info *sc, int which)
          * GPIO1 - front (0) or rear (1) HP jack
          * GPIO7 - speakers (0) or HP (1)
          */
-        val = cmi8788_read_2(sc, GPIO_DATA);
         switch (which) {
         case OUTPUT_LINE:
-            val &= ~(GPIO_PIN7|GPIO_PIN1);
+            cmi8788_setandclear_2 (sc, GPIO_DATA, 0, GPIO_PIN7|GPIO_PIN1);
             break;
         case OUTPUT_REAR_HP:
-            val |= (GPIO_PIN7|GPIO_PIN1);
+            cmi8788_setandclear_2 (sc, GPIO_DATA, GPIO_PIN7|GPIO_PIN1, 0);
             break;
         case OUTPUT_HP:
-            val |= GPIO_PIN7;
-            val &= ~GPIO_PIN1;
+            cmi8788_setandclear_2 (sc, GPIO_DATA, GPIO_PIN7, GPIO_PIN1);
             break;
         }
-        cmi8788_write_2(sc, GPIO_DATA, val);
         break;
     }
     cmi8788_toggle_sound(sc, 1);
@@ -922,10 +756,7 @@ xonar_init(struct xonar_info *sc)
 	count = 100;
 	while ((cmi8788_read_2(sc, AC97_CTRL) & AC97_STATUS_SUSPEND) && (count--))
 	{
-		cmi8788_write_2(sc, AC97_CTRL,
-				(cmi8788_read_2(sc, AC97_CTRL)
-				 & ~AC97_STATUS_SUSPEND) | AC97_RESUME);
-
+        cmi8788_setandclear_2(sc, AC97_CTRL, AC97_RESUME, AC97_STATUS_SUSPEND);
 		DELAY(100);
 	}
 
@@ -945,69 +776,44 @@ xonar_init(struct xonar_info *sc)
 	case SUBID_XONAR_STX:
 		sc->anti_pop_delay = 800;
 		sc->output_control_gpio = GPIO_PIN0;
-		cmi8788_write_1(sc, FUNCTION,
-				cmi8788_read_1(sc, FUNCTION) | FUNCTION_2WIRE);
 
-		cmi8788_write_2(sc, GPIO_CONTROL,
-				cmi8788_read_2(sc, GPIO_CONTROL) | 0x018F);
+        cmi8788_setandclear_1 (sc, FUNCTION, FUNCTION_2WIRE, 0);
+        cmi8788_setandclear_2 (sc, GPIO_CONTROL, 0x018F, 0);
+		cmi8788_setandclear_2(sc, GPIO_DATA, GPIO_PIN0 | GPIO_PIN4 | GPIO_PIN8, 0);
+        cmi8788_setandclear_2(sc, I2C_CTRL, TWOWIRE_SPEED_FAST, 0);
 
-		cmi8788_write_2(sc, GPIO_DATA,
-				cmi8788_read_2(sc, GPIO_DATA) |
-				GPIO_PIN0 | GPIO_PIN4 | GPIO_PIN8);
-
-		cmi8788_write_2(sc, I2C_CTRL,
-				cmi8788_read_2(sc, I2C_CTRL) |
-				TWOWIRE_SPEED_FAST);
-
-		pcm1796_write(sc, XONAR_STX_FRONTDAC, 20, PCM1796_SRST);
-		pcm1796_write(sc, XONAR_STX_FRONTDAC, 20, 0);
+		pcm1796_write(sc, 20, PCM1796_SRST);
+		pcm1796_write(sc,  20, 0);
 		pcm1796_set_volume(sc, 75, 75);
-		pcm1796_write(sc, XONAR_STX_FRONTDAC, 18, PCM1796_FMT_24L|PCM1796_ATLD);
-		pcm1796_write(sc, XONAR_STX_FRONTDAC, 19, 0);
+		pcm1796_write(sc, 18, PCM1796_FMT_24L|PCM1796_ATLD);
+		pcm1796_write(sc, 19, 0);
 		break;
 	case SUBID_XONAR_ST:
 		sc->anti_pop_delay = 100;
 		sc->output_control_gpio = GPIO_PIN0;
 
-		cmi8788_write_1(sc, FUNCTION,
-				cmi8788_read_1(sc, FUNCTION) | FUNCTION_2WIRE);
+        cmi8788_setandclear_1 (sc, FUNCTION, FUNCTION_2WIRE, 0);
+        cmi8788_setandclear_2 (sc, GPIO_CONTROL, 0x01FF, 0);
+		cmi8788_setandclear_2(sc, GPIO_DATA, GPIO_PIN0, GPIO_PIN8);
+        cmi8788_setandclear_2(sc, I2C_CTRL, TWOWIRE_SPEED_FAST, 0);
 
-		cmi8788_write_2(sc, GPIO_CONTROL,
-				cmi8788_read_2(sc, GPIO_CONTROL) | 0x01FF);
-
-		cmi8788_write_2(sc, GPIO_DATA,
-				cmi8788_read_2(sc, GPIO_DATA) |
-				GPIO_PIN0);
-
-        cmi8788_write_2(sc, GPIO_DATA,
-				cmi8788_read_2(sc, GPIO_DATA) &
-				~GPIO_PIN8);
-
-        cmi8788_write_2(sc, I2C_CTRL,
-				cmi8788_read_2(sc, I2C_CTRL) |
-				TWOWIRE_SPEED_FAST);
-
-        /* FIXME:
-         * Confusing naming. Invokations of the following functions
-         * have nothing to do with PCM1796
-         */
-		pcm1796_write_i2c(sc, XONAR_ST_CLOCK, 0x5, 0x9);
-		pcm1796_write_i2c(sc, XONAR_ST_CLOCK, 0x2, 0x0);
-		pcm1796_write_i2c(sc, XONAR_ST_CLOCK, 0x3, 0x0 | (0 << 3) | 0x0 | 0x1);
-		pcm1796_write_i2c(sc, XONAR_ST_CLOCK, 0x4, (0 << 1) | 0x0);
-		pcm1796_write_i2c(sc, XONAR_ST_CLOCK, 0x06, 0x00);
-		pcm1796_write_i2c(sc, XONAR_ST_CLOCK, 0x07, 0x10);
-		pcm1796_write_i2c(sc, XONAR_ST_CLOCK, 0x08, 0x00);
-		pcm1796_write_i2c(sc, XONAR_ST_CLOCK, 0x09, 0x00);
-		pcm1796_write_i2c(sc, XONAR_ST_CLOCK, 0x16, 0x10);
-		pcm1796_write_i2c(sc, XONAR_ST_CLOCK, 0x17, 0);
-		pcm1796_write_i2c(sc, XONAR_ST_CLOCK, 0x5, 0x1);
+		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x5, 0x9, NULL);
+		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x2, 0x0, NULL);
+		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x3, 0x0 | (0 << 3) | 0x0 | 0x1, NULL);
+		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x4, (0 << 1) | 0x0, NULL);
+		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x06, 0x00, NULL);
+		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x07, 0x10, NULL);
+		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x08, 0x00, NULL);
+		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x09, 0x00, NULL);
+		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x16, 0x10, NULL);
+		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x17, 0, NULL);
+		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x5, 0x1, NULL);
 
 		/* Init DAC */
-		pcm1796_write(sc, XONAR_ST_FRONTDAC, 20, 0);
-		pcm1796_write(sc, XONAR_ST_FRONTDAC, 18, PCM1796_FMT_24L|PCM1796_ATLD);
+		pcm1796_write(sc, 20, 0);
+		pcm1796_write(sc, 18, PCM1796_FMT_24L|PCM1796_ATLD);
 		pcm1796_set_volume(sc, 75, 75);
-		pcm1796_write(sc, XONAR_ST_FRONTDAC, 19, 0);
+		pcm1796_write(sc, 19, 0);
 	}
 
 	/* check if MPU401 is enabled in MISC register */
@@ -1257,10 +1063,8 @@ xonar_intr(void *p) {
         ch = &(sc->chan[i]);
         if ((ch->state == CHAN_STATE_ACTIVE) && (intstat & ch->irq_mask)) {
             /* Acknowledge the interrupt by disabling and enabling the irq */
-            cmi8788_write_2(sc, IRQ_MASK,
-                            cmi8788_read_2(sc, IRQ_MASK) & ~ch->irq_mask);
-            cmi8788_write_2(sc, IRQ_MASK,
-                            cmi8788_read_2(sc, IRQ_MASK) | ch->irq_mask);
+            cmi8788_setandclear_2 (sc, IRQ_MASK, 0, ch->irq_mask);
+            cmi8788_setandclear_2 (sc, IRQ_MASK, ch->irq_mask, 0);
             chn_intr(ch->channel);
         }
     }

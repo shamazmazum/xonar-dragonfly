@@ -1,5 +1,14 @@
+#ifndef XONAR_H
+#define XONAR_H
+
+#include <sys/param.h>
+#include <machine/bus.h>
+
 #define CMEDIA_VENDOR_ID	0x13F6
 #define CMEDIA_CMI8788		0x8788
+
+#define MAX_PORTS_PLAY 		1
+#define MAX_PORTS_REC       1
 
 /* FIXME: Is it useful anymore? */
 #if 0
@@ -347,3 +356,49 @@
         SOUND_MASK_MONO | \
         SOUND_MASK_PHONE \
         )
+
+struct xonar_chinfo {
+	struct snd_dbuf		*buffer;
+	struct pcm_channel 	*channel;
+	struct xonar_info 	*parent;
+	int			dir;
+	u_int32_t		fmt, spd, phys_buf, bps;
+	int 			adc_type;
+	int 			dac_type;
+	int 			dma_start;
+	int 			irq_mask;
+	int 			state;
+	int 			blksz;
+};
+
+struct pcm1796_info {
+	u_int8_t 	regs[PCM1796_NREGS];
+	int 		hp;
+	int 		hp_gain;
+};
+
+struct xonar_info {
+	device_t dev;
+	struct mtx *lock;
+
+	struct resource *reg, *irq;
+	int regtype, regid, irqid;
+
+	void *ih;
+    bus_space_tag_t st;
+    bus_space_handle_t sh;
+	bus_dma_tag_t	dmats[2];
+
+	uint16_t model;
+
+	int vol[2];
+	int bufmaxsz, bufsz;
+	int pnum;
+	struct pcm1796_info pcm1796;
+	struct xonar_chinfo chan[MAX_PORTS_PLAY+MAX_PORTS_REC];
+
+	int anti_pop_delay;
+	int output_control_gpio;
+};
+
+#endif
