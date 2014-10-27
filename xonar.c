@@ -924,6 +924,16 @@ xonar_cleanup(struct xonar_info *sc)
 		sc->lock = NULL;
 	}
 
+    if (sc->ac97_codec_0) {
+        ac97_destory (sc->ac97_codec_0);
+        sc->ac97_codec_0 = NULL;
+    }
+
+    if (sc->ac97_codec_1) {
+        ac97_destory (sc->ac97_codec_1);
+        sc->ac97_codec_1 = NULL;
+    }
+
 	kern_free(sc, M_DEVBUF);
 }
 
