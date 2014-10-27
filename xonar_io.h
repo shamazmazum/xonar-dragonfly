@@ -20,4 +20,7 @@ extern void cmi8788_setandclear_1( struct xonar_info *sc, int reg,
 
 extern int cmi8788_write_i2c (struct xonar_info *sc, uint8_t codec_num,
                               uint8_t reg, uint8_t data, uint8_t *sync);
+
+extern uint32_t xonar_ac97_read (struct xonar_info *sc, int which, int reg);
+extern void xonar_ac97_write (struct xonar_info *sc, int which, int reg, uint32_t data);
 #endif

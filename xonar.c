@@ -3,6 +3,7 @@
 #endif
 
 #include <dev/sound/pcm/sound.h>
+#include <dev/sound/pcm/ac97.h>
 
 #if defined __DragonFly__
 #include <bus/pci/pcireg.h>
@@ -84,6 +85,26 @@ static void pcm1796_write (struct xonar_info *sc, uint8_t reg, uint8_t data)
     uint8_t *sync_reg = &(sc->pcm1796.regs[reg - PCM1796_REGBASE]);
     cmi8788_write_i2c (sc, XONAR_STX_FRONTDAC, reg, data, sync_reg);
 }
+
+static int
+xonar_ac97_read_mthd (kobj_t obj, void *devinfo, int reg)
+{
+    return xonar_ac97_read (devinfo, 0, reg);
+}
+
+static int
+xonar_ac97_write_mthd (kobj_t obj, void *devinfo, int reg, uint32_t data)
+{
+    xonar_ac97_write (devinfo, 0, reg, data);
+    return 0;
+}
+
+static kobj_method_t xonar_ac97_methods[] = {
+	KOBJMETHOD(ac97_read,		xonar_ac97_read_mthd),
+    KOBJMETHOD(ac97_write,		xonar_ac97_write_mthd),
+	KOBJMETHOD_END
+};
+AC97_DECLARE(xonar_ac97);
 
 static unsigned int
 pcm1796_vol_scale(int vol)
@@ -704,6 +725,46 @@ cmi8788_get_output(struct xonar_info *sc)
     return res;
 }
 
+/* Copied from OSS driver */
+static void
+ac97_init (struct xonar_info *sc)
+{
+    /* Gpio #0 programmed as output, set CMI9780 Reg0x70 */
+    xonar_ac97_write(sc, 0, 0x70, 0x100);
+
+    /* LI2LI,MIC2MIC; let them always on, FOE on, ROE/BKOE/CBOE off */
+    xonar_ac97_write(sc, 0, 0x62, 0x180F);
+
+    /* change PCBeep path, set Mix2FR on, option for quality issue */
+    xonar_ac97_write(sc, 0, 0x64, 0x8043);
+#if 0
+   /* unmute Master Volume */
+    xonar_ac97_write(sc, 0, 0x02, 0x0);
+
+    /* mute PCBeep, option for quality issues */
+    xonar_ac97_write(sc, 0, 0x0A, 0x8000);
+
+    /* Record Select Control Register (Index 1Ah) */
+    xonar_ac97_write(sc, 0, 0x1A, 0x0000);
+
+    /* set Mic Volume Register 0x0Eh umute and enable micboost */
+    xonar_ac97_write(sc, 0, 0x0E, 0x0848);
+
+    /* set Line in Volume Register 0x10h mute */
+    xonar_ac97_write(sc, 0, 0x10, 0x8808);
+
+    /* set CD Volume Register 0x12h mute */
+    xonar_ac97_write(sc, 0, 0x12, 0x8808);
+
+    /* set AUX Volume Register 0x16h max */
+    xonar_ac97_write(sc, 0, 0x16, 0x0808);
+
+    /* set record gain Register 0x1Ch to max */
+    xonar_ac97_write(sc, 0, 0x1C, 0x0F0F);
+#endif
+    xonar_ac97_write(sc, 0, 0x71, 0x0001);
+}
+
 static int
 xonar_init(struct xonar_info *sc)
 {
@@ -750,7 +811,6 @@ xonar_init(struct xonar_info *sc)
 	cmi8788_write_1(sc, REC_MONITOR, 0x00);
 	cmi8788_write_1(sc, MONITOR_ROUTING, 0xE4);
 
-	/* AC97 dances. Who needs it anyway? */
 	/* Cold reset onboard AC97 */
 	cmi8788_write_2(sc, AC97_CTRL, AC97_COLD_RESET);
 	count = 100;
@@ -766,11 +826,19 @@ xonar_init(struct xonar_info *sc)
 	sVal = cmi8788_read_2(sc, AC97_CTRL);
 
 	/* check if there's an onboard AC97 codec */
-	if (sVal & AC97_CODEC0)
+	if (sVal & AC97_CODEC0) {
+        /* FIXME: Set in and out chan config regs to 0 as in OSS driver */
+        cmi8788_write_2 (sc, AC97_OUT_CHAN_CONFIG, 0);
+        cmi8788_write_2 (sc, AC97_IN_CHAN_CONFIG, 0);
+        sc->ac97_codec_0 = AC97_CREATE (sc->dev, sc, xonar_ac97);
 		device_printf(sc->dev, "AC97 codec0 found\n");
+    }
 	/* check if there's an front panel AC97 codec */
-	if (sVal & AC97_CODEC1)
+	if (sVal & AC97_CODEC1) {
+        cmi8788_setandclear_2 (sc, AC97_OUT_CHAN_CONFIG, 0x0033, 0);
+        cmi8788_setandclear_2 (sc, AC97_IN_CHAN_CONFIG, 0x0033, 0);
 		device_printf(sc->dev, "AC97 codec1 found\n");
+    }
 
 	switch (sc->model) {
 	case SUBID_XONAR_STX:
@@ -787,6 +855,8 @@ xonar_init(struct xonar_info *sc)
 		pcm1796_set_volume(sc, 75, 75);
 		pcm1796_write(sc, 18, PCM1796_FMT_24L|PCM1796_ATLD);
 		pcm1796_write(sc, 19, 0);
+
+        ac97_init (sc);
 		break;
 	case SUBID_XONAR_ST:
 		sc->anti_pop_delay = 100;
@@ -814,6 +884,9 @@ xonar_init(struct xonar_info *sc)
 		pcm1796_write(sc, 18, PCM1796_FMT_24L|PCM1796_ATLD);
 		pcm1796_set_volume(sc, 75, 75);
 		pcm1796_write(sc, 19, 0);
+
+        /* Init AC97 codec 0 */
+        ac97_init (sc);
 	}
 
 	/* check if MPU401 is enabled in MISC register */
