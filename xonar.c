@@ -854,94 +854,6 @@ xonar_cleanup(struct xonar_info *sc)
 	kern_free(sc, M_DEVBUF);
 }
 
-/* this one is a BIG HUGE XXX 
- *
- * it replaces pcm_channel's buffers with
- * newly allocated different sized
- * this is insane, fix it
- */
-static int
-chan_reset_buf(struct xonar_chinfo *ch)
-{
-	struct snd_dbuf *b, *bs;
-	struct pcm_channel *c;
-	struct xonar_info *sc;
-
-	c = ch->channel;
-	sc = ch->parent;
-
-	b = sndbuf_create(c->dev, c->name, "primary", c);
-	bs = sndbuf_create(c->dev, c->name, "secondary", c);
-	device_printf(sc->dev, "Replacing buffers %p->%p, %p->%p..",
-			c->bufhard, b, c->bufsoft, bs);
-	sndbuf_destroy(c->bufsoft);
-	sndbuf_destroy(c->bufhard);
-	if (pcm_sndbuf_alloc(b, sc->dmats[0], 0, sc->bufsz) != 0) {
-		kern_printf("failed\n");
-		device_printf(sc->dev, "Cannot allocate sndbuf\n");
-		goto out;
-	}
-	sndbuf_setup(bs, NULL, 0);
-	c->bufhard = b;
-	c->bufsoft = bs;
-	ch->buffer = b;
-
-	sndbuf_setfmt(b, c->format);
-	sndbuf_setspd(b, c->speed);
-	sndbuf_setfmt(bs, c->format);
-	sndbuf_setspd(bs, c->speed);
-
-#if defined __FreeBSD__
-	if (c->direction == PCMDIR_PLAY) {
-		bs->sl = sndbuf_getmaxsize(bs);
-		bs->shadbuf = kern_malloc(bs->sl, M_DEVBUF, M_NOWAIT);
-		if (bs->shadbuf == NULL)
-			goto out;
-	}
-#endif
-	kern_printf("succeed\n");
-	return 0;
-out:
-	sndbuf_destroy(b);
-	sndbuf_destroy(bs);
-	ch->state = CHAN_STATE_INVALID;
-	return 1;
-}
-
-static int
-sysctl_xonar_buffersize(SYSCTL_HANDLER_ARGS) 
-{
-	struct xonar_info *sc;
-	struct xonar_chinfo *ch;
-	device_t dev;
-	int val, err;
-	int obufsz;
-
-	dev = oidp->oid_arg1;
-	sc = pcm_getdevinfo(dev);
-	if (sc == NULL)
-		return EINVAL;
-	val = sc->bufsz;
-	err = sysctl_handle_int(oidp, &val, 0, req);
-	if (err || req->newptr == NULL)
-		return (err);
-	if ((val < 2048) || (val > sc->bufmaxsz))
-		return (EINVAL);
-	ch = &sc->chan[0];
-	if (ch->state == CHAN_STATE_ACTIVE)
-		return EBUSY;
-	if (val != sc->bufsz) {
-		obufsz = sc->bufsz;
-		sc->bufsz = 2048*(val/2048);
-		ch->state = CHAN_STATE_INIT;
-		if (chan_reset_buf(ch)) {
-			sc->bufsz = obufsz;
-			return EINVAL;
-		}
-	}
-	return err;
-}
-
 static int
 sysctl_xonar_rec_monitor(SYSCTL_HANDLER_ARGS)
 {
@@ -1159,11 +1071,6 @@ xonar_attach(device_t dev)
 		 PCM_KLDSTRING(snd_cmi8788));
 	pcm_setstatus(dev, status);
 
-	SYSCTL_ADD_PROC(kern_sysctl_ctx(sc->dev),
-			SYSCTL_CHILDREN(kern_sysctl_tree(sc->dev)), OID_AUTO,
-			"buffersize", CTLTYPE_UINT | CTLFLAG_RW | CTLFLAG_ANYBODY,
-			sc->dev, sizeof(sc->dev), sysctl_xonar_buffersize, "I",
-			"Set buffer size");
 	SYSCTL_ADD_PROC(kern_sysctl_ctx(sc->dev),
 			SYSCTL_CHILDREN(kern_sysctl_tree(sc->dev)), OID_AUTO,
 			"output", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY, sc->dev,
