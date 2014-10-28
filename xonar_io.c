@@ -61,3 +61,30 @@ int cmi8788_write_i2c (struct xonar_info *sc, uint8_t codec_num, uint8_t reg,
 
 	return 0;
 }
+
+uint32_t xonar_ac97_read (struct xonar_info *sc, int which, int reg)
+{
+    uint32_t val;
+
+    val = 0;
+    val |= reg << 16;
+    val |= 1 << 23;		/*ac97 read the reg address */
+    val |= which << 24;
+    cmi8788_write_4 (sc, AC97_CMD_DATA, val);
+    DELAY (200);
+    val = cmi8788_read_4 (sc, AC97_CMD_DATA) & 0xFFFF;
+    return val;
+}
+
+void xonar_ac97_write (struct xonar_info *sc, int which, int reg, uint32_t data)
+{
+    uint32_t val;
+
+    val = 0;
+    val |= reg << 16;
+    val |= 0 << 23;		/*ac97 read the reg address */
+    val |= which << 24;
+    val |= data & 0xFFFF;
+    cmi8788_write_4 (sc, AC97_CMD_DATA, val);
+    DELAY (200);
+}
