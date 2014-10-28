@@ -400,8 +400,8 @@ struct xonar_info {
 	int anti_pop_delay;
 	int output_control_gpio;
 
-    struct ac97_info *ac97_codec_0;
-    struct ac97_info *ac97_codec_1;
+    struct ac97_info *ac97_codec;
+    struct snd_mixer *ac97_mixer;
 };
 
 #endif

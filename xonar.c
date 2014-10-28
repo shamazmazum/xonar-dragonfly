@@ -606,14 +606,91 @@ static kobj_method_t xonar_chan_methods[] = {
 };
 CHANNEL_DECLARE(xonar_chan);
 
+/* Copied from OSS driver */
+static void
+ac97_init (struct xonar_info *sc)
+{
+    /* Gpio #0 programmed as output, set CMI9780 Reg0x70 */
+    xonar_ac97_write(sc, 0, 0x70, 0x100);
+
+    /* LI2LI,MIC2MIC; let them always on, FOE on, ROE/BKOE/CBOE off */
+    xonar_ac97_write(sc, 0, 0x62, 0x180F);
+
+    /* change PCBeep path, set Mix2FR on, option for quality issue */
+    xonar_ac97_write(sc, 0, 0x64, 0x8043);
+
+#if 0
+   /* unmute Master Volume */
+    xonar_ac97_write(sc, 0, 0x02, 0x0);
+
+    /* mute PCBeep, option for quality issues */
+    xonar_ac97_write(sc, 0, 0x0A, 0x8000);
+
+    /* Record Select Control Register (Index 1Ah) */
+    xonar_ac97_write(sc, 0, 0x1A, 0x0000);
+
+    /* set Mic Volume Register 0x0Eh umute and enable micboost */
+    xonar_ac97_write(sc, 0, 0x0E, 0x0848);
+
+    /* set Line in Volume Register 0x10h mute */
+    xonar_ac97_write(sc, 0, 0x10, 0x8808);
+
+    /* set CD Volume Register 0x12h mute */
+    xonar_ac97_write(sc, 0, 0x12, 0x8808);
+
+    /* set AUX Volume Register 0x16h max */
+    xonar_ac97_write(sc, 0, 0x16, 0x0808);
+
+    /* set record gain Register 0x1Ch to max */
+    xonar_ac97_write(sc, 0, 0x1C, 0x0F0F);
+#endif
+
+    xonar_ac97_write(sc, 0, 0x71, 0x0001);
+}
+
 /* mixer interface */
 static int
 xonar_mixer_init(struct snd_mixer *m)
 {
-	/* struct xonar_info *sc = mix_getdevinfo(m); */
+	struct xonar_info *sc = mix_getdevinfo(m);
+    int devs;
+    int rec_devs;
 
-	mix_setdevs(m, SOUND_MASK_VOLUME);
+    /* Create AC97 submixer */
+    if (sc->ac97_codec != NULL) {
+        sc->ac97_mixer = mixer_create (sc->dev, ac97_getmixerclass(), sc->ac97_codec, "ac97");
+        /* Here comes AC97 initialization, as mixer_create resets all configuration made to is before */
+        ac97_init (sc);
+    }
+
+    devs = SOUND_MASK_VOLUME;
+    if (sc->ac97_mixer != NULL) {
+        devs |= SOUND_MASK_IGAIN;
+        devs |= SOUND_MASK_RECLEV;
+    }
+
+    rec_devs = SOUND_MASK_LINE;
+    if (sc->ac97_mixer != NULL)
+        rec_devs |= SOUND_MASK_MIC;
+
+	mix_setdevs(m, devs|rec_devs);
+    mix_setrecdevs (m, rec_devs);
 	return (0);
+}
+
+static int
+xonar_mixer_uninit (struct snd_mixer *m)
+{
+    struct xonar_info *sc = mix_getdevinfo (m);
+    int err = 0;
+
+    if (sc->ac97_mixer != NULL) {
+        err = mixer_delete (sc->ac97_mixer);
+        if (err) return err;
+        sc->ac97_mixer = NULL;
+        sc->ac97_codec = NULL; /* It also frees the codec */
+    }
+    return 0;
 }
 
 static int
@@ -622,20 +699,51 @@ xonar_mixer_set(struct snd_mixer *m, unsigned dev, unsigned left, unsigned right
 	struct xonar_info *sc = mix_getdevinfo(m);
 
 	snd_mtxlock(sc->lock);
-	switch (dev) {
-	case SOUND_MIXER_VOLUME:
+    if (dev == SOUND_MIXER_VOLUME) {
 		sc->vol[0] = left;
 		sc->vol[1] = right;
 		pcm1796_set_volume(sc, left, right);
-		break;
 	}
+
+    /* Pass it to AC97 */
+    if (sc->ac97_mixer != NULL)
+        mix_set (sc->ac97_mixer, dev, left, right);
 	snd_mtxunlock(sc->lock);
 	return (0);
 }
 
+static uint32_t
+xonar_mixer_setrecsrc(struct snd_mixer *m, uint32_t src)
+{
+    struct xonar_info *sc = mix_getdevinfo(m);
+    uint32_t recmask = 0;
+
+    if ((src & SOUND_MASK_LINE) && (src & SOUND_MASK_MIC)) {
+        device_printf (sc->dev, "Cannot set both line-in and mic\n");
+        return 0;
+    }
+
+    if (src & SOUND_MASK_LINE) {
+        cmi8788_setandclear_2 (sc, GPIO_DATA, 0, GPIO_PIN8);
+        xonar_ac97_write (sc, 0, 0x72, xonar_ac97_read (sc, 0, 0x72) & ~0x1);
+        recmask = SOUND_MASK_LINE;
+    }
+    else if (src & SOUND_MASK_MIC) {
+        if ((sc->ac97_mixer != NULL) && (mix_setrecsrc (sc->ac97_mixer, src) == 0)) {
+            cmi8788_setandclear_2 (sc, GPIO_DATA, GPIO_PIN8, 0);
+            xonar_ac97_write (sc, 0, 0x72, xonar_ac97_read (sc, 0, 0x72) | 0x1);
+            recmask = SOUND_MASK_MIC;
+        }
+    }
+
+    return recmask;
+}
+
 static kobj_method_t xonar_mixer_methods[] = {
 	KOBJMETHOD(mixer_init, xonar_mixer_init),
+    KOBJMETHOD(mixer_uninit, xonar_mixer_uninit),
 	KOBJMETHOD(mixer_set, xonar_mixer_set),
+    KOBJMETHOD(mixer_setrecsrc, xonar_mixer_setrecsrc),
 	KOBJMETHOD_END
 };
 MIXER_DECLARE(xonar_mixer);
@@ -725,46 +833,6 @@ cmi8788_get_output(struct xonar_info *sc)
     return res;
 }
 
-/* Copied from OSS driver */
-static void
-ac97_init (struct xonar_info *sc)
-{
-    /* Gpio #0 programmed as output, set CMI9780 Reg0x70 */
-    xonar_ac97_write(sc, 0, 0x70, 0x100);
-
-    /* LI2LI,MIC2MIC; let them always on, FOE on, ROE/BKOE/CBOE off */
-    xonar_ac97_write(sc, 0, 0x62, 0x180F);
-
-    /* change PCBeep path, set Mix2FR on, option for quality issue */
-    xonar_ac97_write(sc, 0, 0x64, 0x8043);
-#if 0
-   /* unmute Master Volume */
-    xonar_ac97_write(sc, 0, 0x02, 0x0);
-
-    /* mute PCBeep, option for quality issues */
-    xonar_ac97_write(sc, 0, 0x0A, 0x8000);
-
-    /* Record Select Control Register (Index 1Ah) */
-    xonar_ac97_write(sc, 0, 0x1A, 0x0000);
-
-    /* set Mic Volume Register 0x0Eh umute and enable micboost */
-    xonar_ac97_write(sc, 0, 0x0E, 0x0848);
-
-    /* set Line in Volume Register 0x10h mute */
-    xonar_ac97_write(sc, 0, 0x10, 0x8808);
-
-    /* set CD Volume Register 0x12h mute */
-    xonar_ac97_write(sc, 0, 0x12, 0x8808);
-
-    /* set AUX Volume Register 0x16h max */
-    xonar_ac97_write(sc, 0, 0x16, 0x0808);
-
-    /* set record gain Register 0x1Ch to max */
-    xonar_ac97_write(sc, 0, 0x1C, 0x0F0F);
-#endif
-    xonar_ac97_write(sc, 0, 0x71, 0x0001);
-}
-
 static int
 xonar_init(struct xonar_info *sc)
 {
@@ -830,7 +898,7 @@ xonar_init(struct xonar_info *sc)
         /* FIXME: Set in and out chan config regs to 0 as in OSS driver */
         cmi8788_write_2 (sc, AC97_OUT_CHAN_CONFIG, 0);
         cmi8788_write_2 (sc, AC97_IN_CHAN_CONFIG, 0);
-        sc->ac97_codec_0 = AC97_CREATE (sc->dev, sc, xonar_ac97);
+        sc->ac97_codec = AC97_CREATE (sc->dev, sc, xonar_ac97);
 		device_printf(sc->dev, "AC97 codec0 found\n");
     }
 	/* check if there's an front panel AC97 codec */
@@ -856,7 +924,6 @@ xonar_init(struct xonar_info *sc)
 		pcm1796_write(sc, 18, PCM1796_FMT_24L|PCM1796_ATLD);
 		pcm1796_write(sc, 19, 0);
 
-        ac97_init (sc);
 		break;
 	case SUBID_XONAR_ST:
 		sc->anti_pop_delay = 100;
@@ -884,9 +951,6 @@ xonar_init(struct xonar_info *sc)
 		pcm1796_write(sc, 18, PCM1796_FMT_24L|PCM1796_ATLD);
 		pcm1796_set_volume(sc, 75, 75);
 		pcm1796_write(sc, 19, 0);
-
-        /* Init AC97 codec 0 */
-        ac97_init (sc);
 	}
 
 	/* check if MPU401 is enabled in MISC register */
@@ -923,16 +987,6 @@ xonar_cleanup(struct xonar_info *sc)
 		snd_mtxfree(sc->lock);
 		sc->lock = NULL;
 	}
-
-    if (sc->ac97_codec_0) {
-        ac97_destory (sc->ac97_codec_0);
-        sc->ac97_codec_0 = NULL;
-    }
-
-    if (sc->ac97_codec_1) {
-        ac97_destory (sc->ac97_codec_1);
-        sc->ac97_codec_1 = NULL;
-    }
 
 	kern_free(sc, M_DEVBUF);
 }
