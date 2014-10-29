@@ -2,7 +2,11 @@
 #define XONAR_H
 
 #include <sys/param.h>
+#if defined(__DragonFly__)
+#include <sys/bus.h>
+#elif defined (__FreeBSD__)
 #include <machine/bus.h>
+#endif
 
 #define CMEDIA_VENDOR_ID	0x13F6
 #define CMEDIA_CMI8788		0x8788

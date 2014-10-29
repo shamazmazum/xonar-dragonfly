@@ -1,20 +1,56 @@
-#include <sys/types.h>
+#ifndef XONAR_COMPAT_H
+#define XONAR_COMPAT_H
 
-#include <dev/sound/pcm/sound.h>
-#include <sys/sysctl.h>
-#include <sys/bus.h>
+#if !defined(__DragonFly__) && !defined(__FreeBSD__)
+#error "Platform not supported"
+#endif
 
 /* malloc / printf stuff */
-extern int kern_printf(const char *fmt, ...);
-extern int kern_snprintf(char *str, size_t size, const char *fmt, ...);
-extern void* kern_malloc(unsigned long size, struct malloc_type *type, int flags);
-extern void kern_free (void *addr, struct malloc_type *type);
+#if defined __DragonFly__
+#define kern_printf(fmt, ...) kprintf (fmt, ##__VA_ARGS__)
+#define kern_snprintf(str, size, fmt, ...) ksnprintf (str, size, fmt, ##__VA_ARGS__)
+#define kern_malloc(size, type, flags) kmalloc (size, type, flags)
+#define kern_free(addr, type) kfree (addr, type)
+#elif defined __FreeBSD__
+#define kern_printf(fmt, ...) printf (fmt, ##__VA_ARGS__)
+#define kern_snprintf(str, size, fmt, ...) snprintf (str, size, fmt, ##__VA_ARGS__)
+#define kern_malloc(size, type, flags) malloc (size, type, flags)
+#define kern_free(addr, type) free (addr, type)
+#endif
 
 /* dma tag creation also differs */
-extern int xonar_create_dma_tag(bus_dma_tag_t *tag, bus_size_t maxsize, bus_dma_tag_t parent_tag, void *lock);
+#if defined __DragonFly__
+#define xonar_create_dma_tag(tag, maxsize, parent_tag, lock) bus_dma_tag_create (\
+    /* parent */ parent_tag,                                            \
+    /* alignment */ 4, /* boundary */ 0,                                \
+    /* lowaddr */ BUS_SPACE_MAXADDR_32BIT,                              \
+    /* highaddr */ BUS_SPACE_MAXADDR,                                   \
+    /* filter */ NULL, /* filterarg */ NULL,                            \
+    /* maxsize */ maxsize, /* nsegments */ 1,                           \
+    /* maxsegz */ 0x3ffff,                                              \
+    /* flags */ 0, /* result */ tag)
+#elif defined __FreeBSD__
+#define xonar_create_dma_tag(tag, maxsize, parent_tag, lock) bus_dma_tag_create (\
+        /* parent */ parent_tag,                                        \
+        /* alignment */ 4, /* boundary */ 0,                            \
+        /* lowaddr */ BUS_SPACE_MAXADDR_32BIT,                          \
+        /* highaddr */ BUS_SPACE_MAXADDR,                               \
+        /* filter */ NULL, /* filterarg */ NULL,                        \
+        /* maxsize */ maxsize, /* nsegments */ 1,                       \
+        /* maxsegz */ 0x3ffff,                                          \
+        /* flags */ 0, /* lock fn */ busdma_lock_mutex,                 \
+        /* lock */ lock, /* result */ tag)
+#endif
 
 /* stuff related to pcm driver */
-extern int pcm_sndbuf_alloc(struct snd_dbuf *b, bus_dma_tag_t dmatag, int dmaflags,
-							unsigned int size);
-extern struct sysctl_ctx_list* kern_sysctl_ctx(device_t dev); /* pcm driver manages sysctls in DragonFly */
-extern struct sysctl_oid* kern_sysctl_tree(device_t dev);
+#if defined __DragonFly__
+#define pcm_sndbuf_alloc(b, dmatag, dmaflags, size) sndbuf_alloc (b, dmatag, size)
+/* pcm driver manages sysctls in DragonFly */
+#define kern_sysctl_ctx(dev) snd_sysctl_tree(dev)
+#define kern_sysctl_tree(dev) snd_sysctl_tree_top(dev)
+#elif defined __FreeBSD__
+#define pcm_sndbuf_alloc(b, dmatag, dmaflags, size) sndbuf_alloc (b, dmatag, dmaflags, size)
+#define kern_sysctl_ctx(dev) device_get_sysctl_ctx(dev)
+#define kern_sysctl_tree(dev) device_get_sysctl_tree(dev)
+#endif
+#endif

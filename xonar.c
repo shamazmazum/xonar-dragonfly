@@ -606,6 +606,7 @@ static kobj_method_t xonar_chan_methods[] = {
 };
 CHANNEL_DECLARE(xonar_chan);
 
+#ifdef __FreeBSD__
 /* Copied from OSS driver */
 static void
 ac97_init (struct xonar_info *sc)
@@ -647,6 +648,7 @@ ac97_init (struct xonar_info *sc)
 
     xonar_ac97_write(sc, 0, 0x71, 0x0001);
 }
+#endif
 
 /* mixer interface */
 static int
@@ -656,12 +658,14 @@ xonar_mixer_init(struct snd_mixer *m)
     int devs;
     int rec_devs;
 
+#ifdef __FreeBSD__
     /* Create AC97 submixer */
     if (sc->ac97_codec != NULL) {
         sc->ac97_mixer = mixer_create (sc->dev, ac97_getmixerclass(), sc->ac97_codec, "ac97");
         /* Here comes AC97 initialization, as mixer_create resets all configuration made to is before */
         ac97_init (sc);
     }
+#endif
 
     devs = SOUND_MASK_VOLUME;
     if (sc->ac97_mixer != NULL) {
@@ -681,6 +685,7 @@ xonar_mixer_init(struct snd_mixer *m)
 static int
 xonar_mixer_uninit (struct snd_mixer *m)
 {
+#ifdef __FreeBSD__
     struct xonar_info *sc = mix_getdevinfo (m);
     int err = 0;
 
@@ -690,6 +695,7 @@ xonar_mixer_uninit (struct snd_mixer *m)
         sc->ac97_mixer = NULL;
         sc->ac97_codec = NULL; /* It also frees the codec */
     }
+#endif
     return 0;
 }
 
@@ -705,9 +711,11 @@ xonar_mixer_set(struct snd_mixer *m, unsigned dev, unsigned left, unsigned right
 		pcm1796_set_volume(sc, left, right);
 	}
 
+#ifdef __FreeBSD__
     /* Pass it to AC97 */
     if (sc->ac97_mixer != NULL)
         mix_set (sc->ac97_mixer, dev, left, right);
+#endif
 	snd_mtxunlock(sc->lock);
 	return (0);
 }
@@ -728,13 +736,14 @@ xonar_mixer_setrecsrc(struct snd_mixer *m, uint32_t src)
         xonar_ac97_write (sc, 0, 0x72, xonar_ac97_read (sc, 0, 0x72) & ~0x1);
         recmask = SOUND_MASK_LINE;
     }
-    else if (src & SOUND_MASK_MIC) {
-        if ((sc->ac97_mixer != NULL) && (mix_setrecsrc (sc->ac97_mixer, src) == 0)) {
-            cmi8788_setandclear_2 (sc, GPIO_DATA, GPIO_PIN8, 0);
-            xonar_ac97_write (sc, 0, 0x72, xonar_ac97_read (sc, 0, 0x72) | 0x1);
-            recmask = SOUND_MASK_MIC;
-        }
+#ifdef __FreeBSD__
+    else if ((src & SOUND_MASK_MIC) && (sc->ac97_mixer != NULL) &&
+             (mix_setrecsrc (sc->ac97_mixer, src) == 0)) {
+        cmi8788_setandclear_2 (sc, GPIO_DATA, GPIO_PIN8, 0);
+        xonar_ac97_write (sc, 0, 0x72, xonar_ac97_read (sc, 0, 0x72) | 0x1);
+        recmask = SOUND_MASK_MIC;
     }
+#endif
 
     return recmask;
 }
@@ -987,6 +996,14 @@ xonar_cleanup(struct xonar_info *sc)
 		snd_mtxfree(sc->lock);
 		sc->lock = NULL;
 	}
+    /* Usually we rely on mixer_uninit to do this,
+     * but in DragonFlyBSD we cannot initialize AC97 mixer,
+     * so we destroy codec here (it was useless anyway in that case)
+     */
+    if (sc->ac97_codec) {
+        ac97_destroy (sc->ac97_codec);
+        sc->ac97_codec = NULL;
+    }
 
 	kern_free(sc, M_DEVBUF);
 }
