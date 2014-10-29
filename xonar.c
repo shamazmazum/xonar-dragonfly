@@ -120,6 +120,7 @@ pcm1796_set_volume(struct xonar_info *sc, int left, int right)
 	pcm1796_write(sc, 17, pcm1796_vol_scale(right));
 }
 
+#if 0
 static void
 pcm1796_set_mute(struct xonar_info *sc, int mute) 
 {
@@ -130,6 +131,7 @@ pcm1796_set_mute(struct xonar_info *sc, int mute)
 	else
 		pcm1796_write(sc, 18, reg & ~PCM1796_MUTE);
 }
+#endif
 
 static int
 pcm1796_get_deemph(struct xonar_info *sc)
@@ -764,10 +766,8 @@ cmi8788_toggle_sound(struct xonar_info *sc, int output) {
 		tsleep (sc, 0, "apop", sc->anti_pop_delay);
         cmi8788_setandclear_2 (sc, GPIO_DATA, sc->output_control_gpio, 0);
 	} else {
-		/* Mute DAC before toggle GPIO to avoid another pop */
-		pcm1796_set_mute (sc, 1);
         cmi8788_setandclear_2 (sc, GPIO_DATA, 0, sc->output_control_gpio);
-		pcm1796_set_mute (sc, 0);
+        tsleep (sc, 0, "apop", sc->anti_pop_delay);
 	}
 }
 
