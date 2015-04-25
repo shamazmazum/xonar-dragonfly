@@ -136,12 +136,7 @@ pcm1796_set_mute(struct xonar_info *sc, int mute)
 static int
 pcm1796_get_deemph(struct xonar_info *sc)
 {
-	uint16_t res;
-
-	snd_mtxlock (sc->lock);
-	res = (sc->pcm1796.regs[PCM1796_REG18] & PCM1796_DME) ? 1 : 0;
-	snd_mtxunlock (sc->lock);
-	return res;
+	return (sc->pcm1796.regs[PCM1796_REG18] & PCM1796_DME) ? 1 : 0;
 }
 
 static void
@@ -150,24 +145,17 @@ pcm1796_set_deemph(struct xonar_info *sc, int deemph)
 	uint16_t reg;
 	/* XXX: set DMF */
 
-	snd_mtxlock (sc->lock);
 	reg = sc->pcm1796.regs[PCM1796_REG18];
 	if (deemph)
 		pcm1796_write(sc, 18, reg | PCM1796_DME);
 	else
 		pcm1796_write(sc, 18, reg & ~PCM1796_DME);
-	snd_mtxunlock (sc->lock);
 }
 
 static int
 pcm1796_get_rolloff(struct xonar_info *sc)
 {
-	uint16_t res;
-
-	snd_mtxlock (sc->lock);
-	res = (sc->pcm1796.regs[PCM1796_REG19] & PCM1796_FLT) ? 1 : 0;
-	snd_mtxunlock (sc->lock);
-	return res;
+	return (sc->pcm1796.regs[PCM1796_REG19] & PCM1796_FLT) ? 1 : 0;
 }
 
 static void
@@ -175,24 +163,17 @@ pcm1796_set_rolloff(struct xonar_info *sc, int rolloff)
 {
 	uint16_t reg;
 
-	snd_mtxlock (sc->lock);
 	reg = sc->pcm1796.regs[PCM1796_REG19];
 	if (rolloff)
 		pcm1796_write(sc, 19, reg | PCM1796_FLT);
 	else
 		pcm1796_write(sc, 19, reg & ~PCM1796_FLT);
-	snd_mtxunlock (sc->lock);
 }
 
 static int
 pcm1796_get_bypass(struct xonar_info *sc)
 {
-	uint16_t res;
-
-	snd_mtxlock (sc->lock);
-	res = (sc->pcm1796.regs[PCM1796_REG20] & PCM1796_DFTH) ? 1 : 0;
-	snd_mtxunlock (sc->lock);
-	return res;
+	return (sc->pcm1796.regs[PCM1796_REG20] & PCM1796_DFTH) ? 1 : 0;
 }
 
 static void
@@ -200,13 +181,84 @@ pcm1796_set_bypass(struct xonar_info *sc, int bypass)
 {
 	uint16_t reg;
 
-	snd_mtxlock (sc->lock);
 	reg = sc->pcm1796.regs[PCM1796_REG20];
 	if (bypass) /* just disables sound */
 		pcm1796_write(sc, 20, reg | PCM1796_DFTH);
 	else
 		pcm1796_write(sc, 20, reg & ~PCM1796_DFTH);
-	snd_mtxunlock (sc->lock);
+}
+
+static void
+cmi8788_toggle_sound(struct xonar_info *sc, int output) {
+	if (output) {
+		cmi8788_setandclear_2 (sc, GPIO_CONTROL, sc->output_control_gpio, 0);
+		tsleep (sc, 0, "apop", sc->anti_pop_delay);
+		cmi8788_setandclear_2 (sc, GPIO_DATA, sc->output_control_gpio, 0);
+	} else {
+		cmi8788_setandclear_2 (sc, GPIO_DATA, 0, sc->output_control_gpio);
+		tsleep (sc, 0, "apop", sc->anti_pop_delay);
+	}
+}
+
+/* Bits in monitor register are not clear for me,
+   but I think it is enough to set it to 0xf */
+static int
+cmi8788_get_rec_monitor(struct xonar_info *sc)
+{
+	return (cmi8788_read_1 (sc, REC_MONITOR) & 0x0f) ? 1: 0;
+}
+
+static void
+cmi8788_set_rec_monitor(struct xonar_info *sc, int set)
+{
+	if (set) cmi8788_setandclear_1 (sc, REC_MONITOR, 0x0f, 0);
+	else cmi8788_setandclear_1 (sc, REC_MONITOR, 0, 0x0f);
+}
+
+static void
+cmi8788_set_output(struct xonar_info *sc, int which)
+{
+	cmi8788_toggle_sound(sc, 0);
+	switch (sc->model) {
+	case SUBID_XONAR_ST:
+	case SUBID_XONAR_STX:
+		/*
+		 * GPIO1 - front (0) or rear (1) HP jack
+		 * GPIO7 - speakers (0) or HP (1)
+		 */
+		switch (which) {
+		case OUTPUT_LINE:
+			cmi8788_setandclear_2 (sc, GPIO_DATA, 0, GPIO_PIN7|GPIO_PIN1);
+			break;
+		case OUTPUT_REAR_HP:
+			cmi8788_setandclear_2 (sc, GPIO_DATA, GPIO_PIN7|GPIO_PIN1, 0);
+			break;
+		case OUTPUT_HP:
+			cmi8788_setandclear_2 (sc, GPIO_DATA, GPIO_PIN7, GPIO_PIN1);
+			break;
+		}
+		break;
+	}
+	cmi8788_toggle_sound(sc, 1);
+}
+
+static int
+cmi8788_get_output(struct xonar_info *sc)
+{
+	uint16_t val;
+	int res = -1;
+
+	switch (sc->model) {
+	case SUBID_XONAR_ST:
+	case SUBID_XONAR_STX:
+		val = cmi8788_read_2(sc, GPIO_DATA);
+		if (!(val & GPIO_PIN7)) res = OUTPUT_LINE;
+		else if (! (val & GPIO_PIN1)) res = OUTPUT_HP;
+		else res = OUTPUT_REAR_HP;
+		break;
+	}
+
+	return res;
 }
 
 static void 
@@ -758,89 +810,6 @@ static kobj_method_t xonar_mixer_methods[] = {
 	KOBJMETHOD_END
 };
 MIXER_DECLARE(xonar_mixer);
-
-static void
-cmi8788_toggle_sound(struct xonar_info *sc, int output) {
-	if (output) {
-		cmi8788_setandclear_2 (sc, GPIO_CONTROL, sc->output_control_gpio, 0);
-		tsleep (sc, 0, "apop", sc->anti_pop_delay);
-		cmi8788_setandclear_2 (sc, GPIO_DATA, sc->output_control_gpio, 0);
-	} else {
-		cmi8788_setandclear_2 (sc, GPIO_DATA, 0, sc->output_control_gpio);
-		tsleep (sc, 0, "apop", sc->anti_pop_delay);
-	}
-}
-
-/* Bits in monitor register are not clear for me,
-   but I think it is enough to set it to 0xf */
-static void
-cmi8788_set_rec_monitor(struct xonar_info *sc, int set)
-{
-	snd_mtxlock(sc->lock);
-	if (set) cmi8788_setandclear_1 (sc, REC_MONITOR, 0x0f, 0);
-	else cmi8788_setandclear_1 (sc, REC_MONITOR, 0, 0x0f);
-	snd_mtxunlock(sc->lock);
-}
-
-static int
-cmi8788_get_rec_monitor(struct xonar_info *sc)
-{
-	int res;
-	snd_mtxlock(sc->lock);
-	res = (cmi8788_read_1 (sc, REC_MONITOR) & 0x0f) ? 1: 0;
-	snd_mtxunlock(sc->lock);
-	return res;
-}
-
-static void
-cmi8788_set_output(struct xonar_info *sc, int which)
-{
-	snd_mtxlock(sc->lock);
-	cmi8788_toggle_sound(sc, 0);
-	switch (sc->model) {
-	case SUBID_XONAR_ST:
-	case SUBID_XONAR_STX:
-		/*
-		 * GPIO1 - front (0) or rear (1) HP jack
-		 * GPIO7 - speakers (0) or HP (1)
-		 */
-		switch (which) {
-		case OUTPUT_LINE:
-			cmi8788_setandclear_2 (sc, GPIO_DATA, 0, GPIO_PIN7|GPIO_PIN1);
-			break;
-		case OUTPUT_REAR_HP:
-			cmi8788_setandclear_2 (sc, GPIO_DATA, GPIO_PIN7|GPIO_PIN1, 0);
-			break;
-		case OUTPUT_HP:
-			cmi8788_setandclear_2 (sc, GPIO_DATA, GPIO_PIN7, GPIO_PIN1);
-			break;
-		}
-		break;
-	}
-	cmi8788_toggle_sound(sc, 1);
-	snd_mtxunlock(sc->lock);
-}
-
-static int
-cmi8788_get_output(struct xonar_info *sc)
-{
-	uint16_t val;
-	int res = -1;
-
-	snd_mtxlock(sc->lock);
-	switch (sc->model) {
-	case SUBID_XONAR_ST:
-	case SUBID_XONAR_STX:
-		val = cmi8788_read_2(sc, GPIO_DATA);
-		if (!(val & GPIO_PIN7)) res = OUTPUT_LINE;
-		else if (! (val & GPIO_PIN1)) res = OUTPUT_HP;
-		else res = OUTPUT_REAR_HP;
-		break;
-	}
-	snd_mtxunlock(sc->lock);
-
-	return res;
-}
 
 static int
 xonar_init(struct xonar_info *sc)
