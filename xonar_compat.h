@@ -21,25 +21,25 @@
 /* dma tag creation also differs */
 #if defined __DragonFly__
 #define xonar_create_dma_tag(tag, maxsize, parent_tag, lock) bus_dma_tag_create (\
-    /* parent */ parent_tag,                                            \
-    /* alignment */ 4, /* boundary */ 0,                                \
-    /* lowaddr */ BUS_SPACE_MAXADDR_32BIT,                              \
-    /* highaddr */ BUS_SPACE_MAXADDR,                                   \
-    /* filter */ NULL, /* filterarg */ NULL,                            \
-    /* maxsize */ maxsize, /* nsegments */ 1,                           \
-    /* maxsegz */ 0x3ffff,                                              \
-    /* flags */ 0, /* result */ tag)
+	/* parent */ parent_tag,											\
+	/* alignment */ 4, /* boundary */ 0,								\
+	/* lowaddr */ BUS_SPACE_MAXADDR_32BIT,								\
+	/* highaddr */ BUS_SPACE_MAXADDR,									\
+	/* filter */ NULL, /* filterarg */ NULL,							\
+	/* maxsize */ maxsize, /* nsegments */ 1,							\
+	/* maxsegz */ 0x3ffff,												\
+	/* flags */ 0, /* result */ tag)
 #elif defined __FreeBSD__
 #define xonar_create_dma_tag(tag, maxsize, parent_tag, lock) bus_dma_tag_create (\
-        /* parent */ parent_tag,                                        \
-        /* alignment */ 4, /* boundary */ 0,                            \
-        /* lowaddr */ BUS_SPACE_MAXADDR_32BIT,                          \
-        /* highaddr */ BUS_SPACE_MAXADDR,                               \
-        /* filter */ NULL, /* filterarg */ NULL,                        \
-        /* maxsize */ maxsize, /* nsegments */ 1,                       \
-        /* maxsegz */ 0x3ffff,                                          \
-        /* flags */ 0, /* lock fn */ busdma_lock_mutex,                 \
-        /* lock */ lock, /* result */ tag)
+	/* parent */ parent_tag,										\
+	/* alignment */ 4, /* boundary */ 0,							\
+	/* lowaddr */ BUS_SPACE_MAXADDR_32BIT,							\
+	/* highaddr */ BUS_SPACE_MAXADDR,								\
+	/* filter */ NULL, /* filterarg */ NULL,						\
+	/* maxsize */ maxsize, /* nsegments */ 1,						\
+	/* maxsegz */ 0x3ffff,											\
+	/* flags */ 0, /* lock fn */ busdma_lock_mutex,					\
+	/* lock */ lock, /* result */ tag)
 #endif
 
 /* stuff related to pcm driver */
