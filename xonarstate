@@ -1,0 +1,49 @@
+#!/bin/sh
+
+# This is a FreeBSD/DragonFlyBSD Asus Xonar statup script.
+# It stores some of Xonar-related sysctls on system shutdown
+# and restores them on boot. Created by Vasily Postnicov, 2015
+
+# PROVIDE: xonarstate
+# REQUIRE: FILESYSTEMS
+# KEYWORD: nojail shutdown
+
+. /etc/rc.subr
+
+name="xonarstate"
+rcvar="xonarstate_enable"
+stop_cmd="xonarstate_stop"
+start_cmd="xonarstate_start"
+
+xonar_state_path="/var/db"
+
+get_xonar_units()
+{
+    (dmesg | grep "Asus Xonar" | sed -rn "s/pcm([[:digit:]]+).*/\1/p" | uniq)
+}
+
+get_xonar_savedstates()
+{
+    (find $xonar_state_path -name "xonarstate-*" -maxdepth 1)
+}
+
+xonarstate_stop()
+{
+    for unit in `get_xonar_units`; do
+        sysctl -e dev.pcm.$unit.output > $xonar_state_path/xonarstate-$unit
+        sysctl -e dev.pcm.$unit.rolloff >> $xonar_state_path/xonarstate-$unit
+        sysctl -e dev.pcm.$unit.de-emph >> $xonar_state_path/xonarstate-$unit
+    done
+}
+
+xonarstate_start()
+{
+    for state in `get_xonar_savedstates`; do
+        for ctl in `cat ${state}`; do
+            sysctl $ctl
+        done
+    done
+}
+
+load_rc_config $name
+run_rc_command "$1"
