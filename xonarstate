@@ -29,6 +29,8 @@ get_xonar_savedstates()
 
 xonarstate_stop()
 {
+    local unit
+
     for unit in `get_xonar_units`; do
         sysctl -e dev.pcm.$unit.output > $xonar_state_path/xonarstate-$unit
         sysctl -e dev.pcm.$unit.rolloff >> $xonar_state_path/xonarstate-$unit
@@ -38,6 +40,9 @@ xonarstate_stop()
 
 xonarstate_start()
 {
+    local state
+    local ctl
+
     for state in `get_xonar_savedstates`; do
         for ctl in `cat ${state}`; do
             sysctl $ctl
