@@ -31,9 +31,13 @@
 #define CHAN_STATE_INACTIVE	2
 #define CHAN_STATE_INVALID 	3
 
+#define ARRAY_SIZE(a) sizeof(a)/sizeof(a[0])
+
 #define OUTPUT_LINE 		0
 #define OUTPUT_REAR_HP 		1
 #define OUTPUT_HP 		2
+static char *output_str[] = {"Line-Out", "RearHeadphones", "Headphones"};
+static char *rolloff_str[] = {"sharp", "slow"};
 
 #if defined __DragonFly__
 /* stubs */
@@ -246,7 +250,7 @@ static int
 cmi8788_get_output(struct xonar_info *sc)
 {
 	uint16_t val;
-	int res = -1;
+	int res = 0;
 
 	switch (sc->model) {
 	case SUBID_XONAR_ST:
@@ -1003,19 +1007,31 @@ sysctl_xonar_output(SYSCTL_HANDLER_ARGS)
 {
 	struct xonar_info *sc;
 	device_t dev;
-	int val, err;
+	int val, err, i;
+    char buf[20];
 
 	dev = oidp->oid_arg1;
 	sc = pcm_getdevinfo(dev);
 	if (sc == NULL)
 		return EINVAL;
 	val = cmi8788_get_output (sc);
-	if (val < 0)
-		return EINVAL;
-	err = sysctl_handle_int(oidp, &val, 0, req);
+
+    if (val < 0 || val >= ARRAY_SIZE (output_str))
+        return EINVAL;
+
+    strcpy (buf, output_str[val]);
+	err = sysctl_handle_string(oidp, buf, sizeof(buf), req);
 	if (err || req->newptr == NULL)
 		return (err);
-	if (val < 0 || val > 2)
+
+    val = -1;
+    for (i = 0; i < ARRAY_SIZE (output_str); i++) {
+        if (strcmp (buf, output_str[i]) == 0) {
+            val = i;
+            break;
+        }
+    }
+	if (val == -1)
 		return (EINVAL);
 	cmi8788_set_output(sc, val);
 	return err;
@@ -1026,17 +1042,31 @@ sysctl_xonar_rolloff(SYSCTL_HANDLER_ARGS)
 {
 	struct xonar_info *sc;
 	device_t dev;
-	int val, err;
+	int val, err, i;
+	char buf[20];
 
 	dev = oidp->oid_arg1;
 	sc = pcm_getdevinfo(dev);
 	if (sc == NULL)
 		return EINVAL;
 	val = pcm1796_get_rolloff (sc);
-	err = sysctl_handle_int(oidp, &val, 0, req);
+
+	if (val < 0 || val >= ARRAY_SIZE(rolloff_str))
+		return EINVAL;
+
+	strcpy (buf, rolloff_str[val]);
+	err = sysctl_handle_string(oidp, buf, sizeof(buf), req);
 	if (err || req->newptr == NULL)
 		return (err);
-	if (val < 0 || val > 1)
+
+	val = -1;
+	for (i = 0; i < ARRAY_SIZE (rolloff_str); i++) {
+		if (strcmp (buf, rolloff_str[i]) == 0) {
+			val = i;
+			break;
+		}
+	}
+	if (val == -1)
 		return (EINVAL);
 	pcm1796_set_rolloff(sc, val);
 	return err;
@@ -1119,7 +1149,7 @@ xonar_probe(device_t dev)
 		 (pci_get_device(dev) != CMEDIA_CMI8788))
 		return (ENXIO);
 
-	for (i = 0; i < sizeof(xonar_hw) / sizeof(xonar_hw[0]); i++) {
+	for (i = 0; i < ARRAY_SIZE (xonar_hw); i++) {
 		if ((subvid == xonar_hw[i].vendor) &&
 			(subid	== xonar_hw[i].devid))
 			device_set_desc(dev, xonar_hw[i].desc);
@@ -1196,14 +1226,14 @@ xonar_attach(device_t dev)
 
 	SYSCTL_ADD_PROC(kern_sysctl_ctx(sc->dev),
 			SYSCTL_CHILDREN(kern_sysctl_tree(sc->dev)), OID_AUTO,
-			"output", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY, sc->dev,
-			sizeof(sc->dev), sysctl_xonar_output, "I",
-			"Set output: 0 - line, 1 - rear hp, 2 - hp");
+			"output", CTLTYPE_STRING | CTLFLAG_RW | CTLFLAG_ANYBODY, sc->dev,
+			sizeof(sc->dev), sysctl_xonar_output, "A",
+			"Set output direction (Line-Out/RearHeadphones/Headphones)");
 	SYSCTL_ADD_PROC(kern_sysctl_ctx(sc->dev),
 			SYSCTL_CHILDREN(kern_sysctl_tree(sc->dev)), OID_AUTO,
-			"rolloff", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY, sc->dev,
-			sizeof(sc->dev), sysctl_xonar_rolloff, "I",
-			"Set rolloff: 0 - sharp, 1 - slow");
+			"rolloff", CTLTYPE_STRING | CTLFLAG_RW | CTLFLAG_ANYBODY, sc->dev,
+			sizeof(sc->dev), sysctl_xonar_rolloff, "A",
+			"Set rolloff (sharp/slow)");
 	SYSCTL_ADD_PROC(kern_sysctl_ctx(sc->dev),
 			SYSCTL_CHILDREN(kern_sysctl_tree(sc->dev)), OID_AUTO,
 			"de-emph", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY, sc->dev,
