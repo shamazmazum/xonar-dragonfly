@@ -785,10 +785,11 @@ xonar_mixer_setrecsrc(struct snd_mixer *m, uint32_t src)
 	uint32_t recmask = 0;
 
 	if ((src & SOUND_MASK_LINE) && (src & SOUND_MASK_MIC)) {
-		device_printf (sc->dev, "Cannot set both line-in and mic\n");
-		return 0;
+		device_printf (sc->dev, "Cannot set both line-in and mic, falling back to line-in\n");
+		src = SOUND_MASK_LINE;
 	}
 
+	snd_mtxlock (sc->lock);
 	if (src & SOUND_MASK_LINE) {
 		cmi8788_setandclear_2 (sc, GPIO_DATA, 0, GPIO_PIN8);
 		xonar_ac97_write (sc, 0, 0x72, xonar_ac97_read (sc, 0, 0x72) & ~0x1);
@@ -802,6 +803,7 @@ xonar_mixer_setrecsrc(struct snd_mixer *m, uint32_t src)
 		recmask = SOUND_MASK_MIC;
 	}
 #endif
+	snd_mtxunlock (sc->lock);
 
 	return recmask;
 }
@@ -1007,7 +1009,7 @@ sysctl_xonar_output(SYSCTL_HANDLER_ARGS)
 {
 	struct xonar_info *sc;
 	device_t dev;
-	int val, err, i;
+	int val, old_val, err, i;
     char buf[20];
 
 	dev = oidp->oid_arg1;
@@ -1024,7 +1026,7 @@ sysctl_xonar_output(SYSCTL_HANDLER_ARGS)
 	if (err || req->newptr == NULL)
 		return (err);
 
-    val = -1;
+	old_val = val; val = -1;
     for (i = 0; i < ARRAY_SIZE (output_str); i++) {
         if (strcmp (buf, output_str[i]) == 0) {
             val = i;
@@ -1033,7 +1035,7 @@ sysctl_xonar_output(SYSCTL_HANDLER_ARGS)
     }
 	if (val == -1)
 		return (EINVAL);
-	cmi8788_set_output(sc, val);
+	if (val != old_val) cmi8788_set_output(sc, val);
 	return err;
 }
 
