@@ -63,14 +63,14 @@ static const struct {
 #endif
 };
 
-#if defined __DragonFly__
+#if defined __DragonFly__ && __DragonFly_version < 400102
 static u_int32_t xonar_fmt[] = {
 	AFMT_S16_LE | AFMT_STEREO,
 	AFMT_S24_LE | AFMT_STEREO,
 	AFMT_S32_LE | AFMT_STEREO,
 	0
 };
-#elif defined __FreeBSD__
+#else
 static u_int32_t xonar_fmt[] = {
 	SND_FORMAT(AFMT_S16_LE, 2, 0),
 	SND_FORMAT(AFMT_S24_LE, 2, 0),
@@ -381,7 +381,8 @@ xonar_chan_init(kobj_t obj, void *devinfo,
 			device_printf(sc->dev, "Cannot allocate sndbuf\n");
 			return NULL;
 		}
-#if defined __FreeBSD__
+#if defined(__FreeBSD__) ||                                     \
+    (defined(__DragonFly__) && __DragonFly_version >= 400102)
 		DEB(device_printf(sc->dev, "%s buf %d alignment %d\n", (dir == PCMDIR_PLAY)?
 				  "play" : "rec", (uint32_t)sndbuf_getbufaddr(ch->buffer),
 						  sndbuf_getalign(ch->buffer)));
@@ -662,7 +663,8 @@ static kobj_method_t xonar_chan_methods[] = {
 };
 CHANNEL_DECLARE(xonar_chan);
 
-#ifdef __FreeBSD__
+#if defined(__FreeBSD__) || \
+    (defined(__DragonFly__) && __DragonFly_version >= 400102)
 /* Copied from OSS driver */
 static void
 ac97_init (struct xonar_info *sc)
@@ -714,7 +716,8 @@ xonar_mixer_init(struct snd_mixer *m)
 	int devs;
 	int rec_devs;
 
-#ifdef __FreeBSD__
+#if defined(__FreeBSD__) || \
+    (defined(__DragonFly__) && __DragonFly_version >= 400102)
 	/* Create AC97 submixer */
 	if (sc->ac97_codec != NULL) {
 		sc->ac97_mixer = mixer_create (sc->dev, ac97_getmixerclass(), sc->ac97_codec, "ac97");
@@ -741,7 +744,8 @@ xonar_mixer_init(struct snd_mixer *m)
 static int
 xonar_mixer_uninit (struct snd_mixer *m)
 {
-#ifdef __FreeBSD__
+#if defined(__FreeBSD__) || \
+    (defined(__DragonFly__) && __DragonFly_version >= 400102)
 	struct xonar_info *sc = mix_getdevinfo (m);
 	int err = 0;
 
@@ -767,7 +771,8 @@ xonar_mixer_set(struct snd_mixer *m, unsigned dev, unsigned left, unsigned right
 		pcm1796_set_volume(sc, left, right);
 	}
 
-#ifdef __FreeBSD__
+#if defined(__FreeBSD__) ||                                     \
+    (defined(__DragonFly__) && __DragonFly_version >= 400102)
 	/* Pass it to AC97 */
 	if (sc->ac97_mixer != NULL)
 		mix_set (sc->ac97_mixer, dev, left, right);
@@ -793,7 +798,8 @@ xonar_mixer_setrecsrc(struct snd_mixer *m, uint32_t src)
 		xonar_ac97_write (sc, 0, 0x72, xonar_ac97_read (sc, 0, 0x72) & ~0x1);
 		recmask = SOUND_MASK_LINE;
 	}
-#ifdef __FreeBSD__
+#if defined(__FreeBSD__) ||                                         \
+    (defined(__DragonFly__) && __DragonFly_version >= 400102)
 	else if ((src & SOUND_MASK_MIC) && (sc->ac97_mixer != NULL) &&
 			 (mix_setrecsrc (sc->ac97_mixer, src) == 0)) {
 		cmi8788_setandclear_2 (sc, GPIO_DATA, GPIO_PIN8, 0);
