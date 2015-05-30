@@ -383,7 +383,11 @@ struct pcm1796_info {
 
 struct xonar_info {
 	device_t dev;
+#if defined(__FreeBSD__)
 	struct mtx *lock;
+#elif defined(__DragonFly__)
+    struct lock *lock;
+#endif
 
 	struct resource *reg, *irq;
 	int regtype, regid, irqid;

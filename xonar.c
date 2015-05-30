@@ -1,9 +1,7 @@
-#ifdef HAVE_KERNEL_OPTION_HEADERS
-#include "opt_snd.h"
-#endif
-
-#include <dev/sound/pcm/sound.h>
-#include <dev/sound/pcm/ac97.h>
+#include <sys/param.h>
+#include <sys/kernel.h>
+#include <sys/module.h>
+#include <sys/bus.h>
 
 #if defined __DragonFly__
 #include <bus/pci/pcireg.h>
@@ -14,17 +12,17 @@
 #else
 #error "Platform not supported"
 #endif
+
+#include <dev/sound/pcm/sound.h>
+#include <dev/sound/pcm/ac97.h>
+
 #include <sys/sysctl.h>
 #include <sys/endian.h>
 
-#include <sys/param.h>
-#include <sys/kernel.h>
-#include <sys/module.h>
-
-#include "mixer_if.h"
 #include "xonar.h"
 #include "xonar_compat.h"
 #include "xonar_io.h"
+#include "mixer_if.h"
 
 #define CHAN_STATE_INIT 	0
 #define CHAN_STATE_ACTIVE 	1
@@ -39,7 +37,7 @@
 static char *output_str[] = {"Line-Out", "RearHeadphones", "Headphones"};
 static char *rolloff_str[] = {"sharp", "slow"};
 
-#if defined __DragonFly__
+#if defined(__DragonFly__) && __DragonFly_version < 400102
 /* stubs */
 #define AFMT_BIT(fmt) 16
 #define AFMT_CHANNEL(fmt) 2
