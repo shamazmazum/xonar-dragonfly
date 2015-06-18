@@ -376,9 +376,9 @@ struct xonar_chinfo {
 };
 
 struct pcm1796_info {
-	u_int8_t 	regs[PCM1796_NREGS];
-	int 		hp;
-	int 		hp_gain;
+	u_int8_t	regs[PCM1796_NREGS];
+	int			hp;
+	int			hp_gain;
 };
 
 struct xonar_info {
@@ -386,15 +386,15 @@ struct xonar_info {
 #if defined(__FreeBSD__)
 	struct mtx *lock;
 #elif defined(__DragonFly__)
-    struct lock *lock;
+	struct lock *lock;
 #endif
 
 	struct resource *reg, *irq;
 	int regtype, regid, irqid;
 
 	void *ih;
-    bus_space_tag_t st;
-    bus_space_handle_t sh;
+	bus_space_tag_t st;
+	bus_space_handle_t sh;
 	bus_dma_tag_t	dmats[2];
 
 	uint16_t model;
@@ -408,8 +408,8 @@ struct xonar_info {
 	int anti_pop_delay;
 	int output_control_gpio;
 
-    struct ac97_info *ac97_codec;
-    struct snd_mixer *ac97_mixer;
+	struct ac97_info *ac97_codec;
+	struct snd_mixer *ac97_mixer;
 };
 
 #endif

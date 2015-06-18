@@ -103,7 +103,7 @@ xonar_ac97_write_mthd (kobj_t obj, void *devinfo, int reg, uint32_t data)
 
 static kobj_method_t xonar_ac97_methods[] = {
 	KOBJMETHOD(ac97_read,		xonar_ac97_read_mthd),
-    KOBJMETHOD(ac97_write,		xonar_ac97_write_mthd),
+	KOBJMETHOD(ac97_write,		xonar_ac97_write_mthd),
 	KOBJMETHOD_END
 };
 AC97_DECLARE(xonar_ac97);
@@ -1014,7 +1014,7 @@ sysctl_xonar_output(SYSCTL_HANDLER_ARGS)
 	struct xonar_info *sc;
 	device_t dev;
 	int val, old_val, err, i;
-    char buf[20];
+	char buf[20];
 
 	dev = oidp->oid_arg1;
 	sc = pcm_getdevinfo(dev);
@@ -1022,21 +1022,21 @@ sysctl_xonar_output(SYSCTL_HANDLER_ARGS)
 		return EINVAL;
 	val = cmi8788_get_output (sc);
 
-    if (val < 0 || val >= ARRAY_SIZE (output_str))
-        return EINVAL;
+	if (val < 0 || val >= ARRAY_SIZE (output_str))
+		return EINVAL;
 
-    strcpy (buf, output_str[val]);
+	strcpy (buf, output_str[val]);
 	err = sysctl_handle_string(oidp, buf, sizeof(buf), req);
 	if (err || req->newptr == NULL)
 		return (err);
 
 	old_val = val; val = -1;
-    for (i = 0; i < ARRAY_SIZE (output_str); i++) {
-        if (strcmp (buf, output_str[i]) == 0) {
-            val = i;
-            break;
-        }
-    }
+	for (i = 0; i < ARRAY_SIZE (output_str); i++) {
+		if (strcmp (buf, output_str[i]) == 0) {
+			val = i;
+			break;
+		}
+	}
 	if (val == -1)
 		return (EINVAL);
 	if (val != old_val) cmi8788_set_output(sc, val);
