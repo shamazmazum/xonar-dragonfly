@@ -46,6 +46,9 @@ static char *rolloff_str[] = {"sharp", "slow"};
 static int xonar_init(struct xonar_info *);
 static void xonar_cleanup(struct xonar_info *);
 
+static int cmi8788_get_output(struct xonar_info *sc);
+static void cmi8788_set_output(struct xonar_info *sc, int which);
+
 static const struct {
 	uint16_t vendor;
 	uint16_t devid;
@@ -79,6 +82,12 @@ static u_int32_t xonar_fmt[] = {
 };
 #endif
 
+static int vol_offset_hp = 0;
+static int vol_scale_hp = 255;
+
+static int vol_offset_line = 0;
+static int vol_scale_line = 255;
+
 static struct pcmchan_caps xonar_caps = { 32000, 192000, xonar_fmt, 0 };
 
 /* ST/STX only. Do we have pcm1796 in other cards? */
@@ -109,17 +118,52 @@ static kobj_method_t xonar_ac97_methods[] = {
 AC97_DECLARE(xonar_ac97);
 
 static unsigned int
-pcm1796_vol_scale(int vol)
+pcm1796_vol_scale(int vol, int which)
 {
-	/* 0-14 - mute, 255 - max */
-	return (vol * 241)/100;
+	int offset, scale;
+	switch (which) {
+	case OUTPUT_LINE:
+		offset = vol_offset_line;
+		scale = vol_scale_line;
+		break;
+	case OUTPUT_REAR_HP:
+		offset = vol_offset_hp;
+		scale = vol_scale_hp;
+		break;
+	case OUTPUT_HP:
+		offset = vol_offset_hp;
+		scale = vol_scale_hp;
+		break;
+	default:
+		offset = 0;
+		scale = 255;
+	}
+	return offset + vol*scale/100;
 }
 
 static void
 pcm1796_set_volume(struct xonar_info *sc, int left, int right)
 {
-	pcm1796_write(sc, 16, pcm1796_vol_scale(left));
-	pcm1796_write(sc, 17, pcm1796_vol_scale(right));
+	int l, r, too_high = 0;
+
+	sc->vol[0] = left;
+	sc->vol[1] = right;
+
+	l = pcm1796_vol_scale(left, cmi8788_get_output(sc));
+	r = pcm1796_vol_scale(right, cmi8788_get_output(sc));
+
+	if (l & ~(int)0xff) {
+		too_high = 1;
+		l = 255;
+	}
+	if (r & ~(int)0xff) {
+		too_high = 1;
+		r = 255;
+	}
+
+	if (too_high) device_printf (sc->dev, "volume offset and scale are set too high");
+	pcm1796_write(sc, 16, l);
+	pcm1796_write(sc, 17, r);
 }
 
 #if 0
@@ -241,6 +285,7 @@ cmi8788_set_output(struct xonar_info *sc, int which)
 		}
 		break;
 	}
+	pcm1796_set_volume (sc, sc->vol[0], sc->vol[1]);
 	cmi8788_toggle_sound(sc, 1);
 }
 
@@ -766,8 +811,6 @@ xonar_mixer_set(struct snd_mixer *m, unsigned dev, unsigned left, unsigned right
 
 	snd_mtxlock(sc->lock);
 	if (dev == SOUND_MIXER_VOLUME) {
-		sc->vol[0] = left;
-		sc->vol[1] = right;
 		pcm1796_set_volume(sc, left, right);
 	}
 
@@ -908,7 +951,6 @@ xonar_init(struct xonar_info *sc)
 
 		pcm1796_write(sc, 20, PCM1796_SRST);
 		pcm1796_write(sc,  20, 0);
-		pcm1796_set_volume(sc, 75, 75);
 		pcm1796_write(sc, 18, PCM1796_FMT_24L|PCM1796_ATLD);
 		pcm1796_write(sc, 19, 0);
 
@@ -937,9 +979,9 @@ xonar_init(struct xonar_info *sc)
 		/* Init DAC */
 		pcm1796_write(sc, 20, 0);
 		pcm1796_write(sc, 18, PCM1796_FMT_24L|PCM1796_ATLD);
-		pcm1796_set_volume(sc, 75, 75);
 		pcm1796_write(sc, 19, 0);
 	}
+	pcm1796_set_volume(sc, 75, 75);
 
 	/* check if MPU401 is enabled in MISC register */
 	if (cmi8788_read_1 (sc, MISC_REG) & MISC_MIDI)
@@ -1255,6 +1297,22 @@ xonar_attach(device_t dev)
 			"monitor", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY, sc->dev,
 			sizeof(sc->dev), sysctl_xonar_rec_monitor, "I",
 			"Enable recording monitor");
+	SYSCTL_ADD_UINT (kern_sysctl_ctx(sc->dev),
+			SYSCTL_CHILDREN(kern_sysctl_tree(sc->dev)), OID_AUTO,
+			"vol_offset_hp", CTLFLAG_RW | CTLFLAG_ANYBODY, &vol_offset_hp,
+			0, "volume offset when output is set to headphones");
+	SYSCTL_ADD_UINT (kern_sysctl_ctx(sc->dev),
+			SYSCTL_CHILDREN(kern_sysctl_tree(sc->dev)), OID_AUTO,
+			"vol_scale_hp", CTLFLAG_RW | CTLFLAG_ANYBODY, &vol_scale_hp,
+			0, "volume scale when output is set to headphones");
+	SYSCTL_ADD_UINT (kern_sysctl_ctx(sc->dev),
+			SYSCTL_CHILDREN(kern_sysctl_tree(sc->dev)), OID_AUTO,
+			"vol_offset_line", CTLFLAG_RW | CTLFLAG_ANYBODY, &vol_offset_line,
+			0, "volume offset when output is set to line_out");
+	SYSCTL_ADD_UINT (kern_sysctl_ctx(sc->dev),
+			SYSCTL_CHILDREN(kern_sysctl_tree(sc->dev)), OID_AUTO,
+			"vol_scale_line", CTLFLAG_RW | CTLFLAG_ANYBODY, &vol_scale_line,
+			0, "volume scale when output is set to line_out");
 
 	return (0);
 bad:

@@ -6,6 +6,7 @@
 
 # PROVIDE: xonarstate
 # REQUIRE: FILESYSTEMS
+# BEFORE: mixer
 # KEYWORD: nojail shutdown
 
 . /etc/rc.subr
@@ -35,6 +36,11 @@ xonarstate_stop()
         sysctl -e dev.pcm.$unit.output > $xonar_state_path/xonarstate-$unit
         sysctl -e dev.pcm.$unit.rolloff >> $xonar_state_path/xonarstate-$unit
         sysctl -e dev.pcm.$unit.de-emph >> $xonar_state_path/xonarstate-$unit
+
+        sysctl -e dev.pcm.$unit.vol_offset_line >> $xonar_state_path/xonarstate-$unit
+        sysctl -e dev.pcm.$unit.vol_scale_line >> $xonar_state_path/xonarstate-$unit
+        sysctl -e dev.pcm.$unit.vol_offset_hp >> $xonar_state_path/xonarstate-$unit
+        sysctl -e dev.pcm.$unit.vol_scale_hp >> $xonar_state_path/xonarstate-$unit
     done
 }
 
@@ -45,7 +51,7 @@ xonarstate_start()
 
     for state in `get_xonar_savedstates`; do
         for ctl in `cat ${state}`; do
-            sysctl $ctl
+            sysctl $ctl > /dev/null
         done
     done
 }
