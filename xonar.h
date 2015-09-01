@@ -395,7 +395,10 @@ struct xonar_info {
 	void *ih;
 	bus_space_tag_t st;
 	bus_space_handle_t sh;
-	bus_dma_tag_t	dmats[2];
+	bus_dma_tag_t	dmat;
+	bus_dmamap_t dma_map[2];
+	void* buf[2];
+	bus_addr_t phys[2];
 
 	uint16_t model;
 

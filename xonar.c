@@ -381,10 +381,10 @@ xonar_chan_init(kobj_t obj, void *devinfo,
 {
 	struct xonar_info *sc = devinfo;
 	struct xonar_chinfo *ch;
-	int offset = (dir == PCMDIR_PLAY) ? 0 : MAX_PORTS_PLAY;
-	bus_dma_tag_t dmat = (dir == PCMDIR_PLAY) ? sc->dmats[0] : sc->dmats[1];
+	int n = (dir == PCMDIR_PLAY) ? 0 : MAX_PORTS_PLAY;
+	n += sc->pnum;
 
-	ch = &sc->chan[sc->pnum+offset];
+	ch = &sc->chan[n];
 	ch->buffer = b;
 	ch->parent = sc;
 	ch->channel = c;
@@ -421,18 +421,12 @@ xonar_chan_init(kobj_t obj, void *devinfo,
 		device_printf(sc->dev, "channel%d (SPDIF)\n", sc->pnum);
 		break;
 	}
-	if (sc->pnum == 0) {
-		if (pcm_sndbuf_alloc(ch->buffer, dmat, 0, sc->bufsz) != 0) {
-			device_printf(sc->dev, "Cannot allocate sndbuf\n");
-			return NULL;
-		}
-#if defined(__FreeBSD__) ||                                     \
-    (defined(__DragonFly__) && __DragonFly_version >= 400102)
-		DEB(device_printf(sc->dev, "%s buf %d alignment %d\n", (dir == PCMDIR_PLAY)?
-				  "play" : "rec", (uint32_t)sndbuf_getbufaddr(ch->buffer),
-						  sndbuf_getalign(ch->buffer)));
-#endif
+
+	if (sndbuf_setup(ch->buffer, sc->buf[n], sc->bufsz) != 0) {
+		device_printf(sc->dev, "Cannot setup sndbuf\n");
+		return NULL;
 	}
+
 	ch->state = CHAN_STATE_INIT;
 	return ch;
 }
@@ -530,7 +524,7 @@ xonar_prepare_input(struct xonar_chinfo *ch)
 {
 	struct xonar_info *sc = ch->parent;
 	int i2s_bits;
-	uint32_t addr = sndbuf_getbufaddr(ch->buffer);
+	uint32_t addr = sc->phys[1];
 
 	switch (ch->adc_type) {
 	case 2:
@@ -560,7 +554,7 @@ xonar_prepare_output(struct xonar_chinfo *ch)
 {
 	struct xonar_info *sc = ch->parent;
 	int i2s_bits;
-	uint32_t addr = sndbuf_getbufaddr(ch->buffer);
+	uint32_t addr = sc->phys[0];
 
 	switch (ch->dac_type) {
 	case 1:
@@ -999,11 +993,20 @@ xonar_cleanup(struct xonar_info *sc)
 {
 	int i;
 
-	for (i=0; i<2; i++) {
-		if (sc->dmats[i]) {
-			bus_dma_tag_destroy(sc->dmats[i]);
-			sc->dmats[i] = NULL;
+	for (i=0; i<2; i++)
+	{
+		/* FIXME: Is this OK? */
+		if (sc->dma_map[i] != NULL) {
+			bus_dmamap_unload (sc->dmat, sc->dma_map[i]);
+			bus_dmamem_free (sc->dmat, sc->buf[i], sc->dma_map[i]);
+			sc->buf[i] = NULL;
+			sc->dma_map[i] = NULL;
 		}
+	}
+
+	if (sc->dmat) {
+		bus_dma_tag_destroy(sc->dmat);
+		sc->dmat = NULL;
 	}
 	if (sc->ih) {
 		bus_teardown_intr(sc->dev, sc->irq, sc->ih);
@@ -1209,6 +1212,12 @@ xonar_probe(device_t dev)
 	return (BUS_PROBE_DEFAULT);
 }
 
+static void xonar_dma_callback (void *arg, bus_dma_segment_t *segs, int nseg, int error)
+{
+	bus_addr_t *phys = arg;
+	*phys = (error == 0) ? segs->ds_addr : 0;
+}
+
 static int
 xonar_attach(device_t dev) 
 {
@@ -1248,10 +1257,22 @@ xonar_attach(device_t dev)
 	}
 
 	sc->bufmaxsz = sc->bufsz = pcm_getbuffersize(dev, 2048, DEFAULT_BUFFER_BYTES_MULTICH, 65536);
-	for (i=0; i<2; i++) {
-		if (xonar_create_dma_tag(&(sc->dmats[i]), sc->bufsz, bus_get_dma_tag(dev), sc->lock) != 0) {
-			device_printf(sc->dev, "unable to create dma tag\n");
-			return (ENOMEM);
+    if (xonar_create_dma_tag(&sc->dmat, 2*sc->bufsz, bus_get_dma_tag(dev), sc->lock) != 0) {
+        device_printf(sc->dev, "unable to create dma tag\n");
+		goto bad;
+    }
+
+	for (i=0; i<2; i++)
+	{
+		if (bus_dmamem_alloc (sc->dmat, &(sc->buf[i]), BUS_DMA_NOWAIT, &(sc->dma_map[i])) == ENOMEM) {
+			device_printf (dev, "cannot alloc play buffer\n");
+			goto bad;
+		}
+
+		if (bus_dmamap_load (sc->dmat, sc->dma_map[i], sc->buf[i], sc->bufsz, xonar_dma_callback,
+							 &(sc->phys[i]), 0) != 0) {
+			device_printf (dev, "cannot alloc play buffer\n");
+			goto bad;
 		}
 	}
 
@@ -1261,12 +1282,12 @@ xonar_attach(device_t dev)
 	if (pcm_register(dev, sc, MAX_PORTS_PLAY, MAX_PORTS_REC))
 		goto bad;
 
-	for(int i = 0; i < MAX_PORTS_PLAY; i++) {
+	for(i = 0; i < MAX_PORTS_PLAY; i++) {
 		pcm_addchan(dev, PCMDIR_PLAY, &xonar_chan_class, sc);
 		sc->pnum++;
 	}
 	sc->pnum = 0;
-	for(int i = 0; i < MAX_PORTS_REC; i++) {
+	for(i = 0; i < MAX_PORTS_REC; i++) {
 		pcm_addchan(dev, PCMDIR_REC, &xonar_chan_class, sc);
 		sc->pnum++;
 	}
