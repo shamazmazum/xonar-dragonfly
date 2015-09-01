@@ -777,17 +777,16 @@ xonar_mixer_init(struct snd_mixer *m)
 		devs |= SOUND_MASK_RECLEV;
 	}
 
-    /* FIXME: At least in Xonar ST(X) you cannot amplify line input */
-#if 0
-	rec_devs = SOUND_MASK_LINE;
-#else
-    rec_devs = 0;
-#endif
+	rec_devs = 0;
 	if (sc->ac97_mixer != NULL)
 		rec_devs |= SOUND_MASK_MIC;
 
-	mix_setdevs(m, devs|rec_devs);
-	mix_setrecdevs (m, rec_devs);
+	mix_setdevs(m, devs | rec_devs);
+	/*
+	  FIXME: At least in Xonar ST(X) you cannot amplify line input
+	  but you can still choose it as audio input
+	*/
+	mix_setrecdevs (m, rec_devs | SOUND_MASK_LINE);
 	return (0);
 }
 
