@@ -233,16 +233,6 @@
 #define PCM1796_PCMZ 		0x01
 #define PCM1796_DZ 		0x6
 
-/* register indexes in regs[] array */
-#define PCM1796_REGBASE 	16
-#define PCM1796_NREGS 		6
-#define PCM1796_REG16 		0
-#define PCM1796_REG17 		1
-#define PCM1796_REG18 		2
-#define PCM1796_REG19 		3
-#define PCM1796_REG20 		4
-#define PCM1796_REG21 		5
-
 /* defs for AKM 4396 DAC */
 #define AK4396_CTL1        0x00
 #define AK4396_CTL2        0x01
@@ -375,12 +365,6 @@ struct xonar_chinfo {
 	int 			blksz;
 };
 
-struct pcm1796_info {
-	u_int8_t	regs[PCM1796_NREGS];
-	int			hp;
-	int			hp_gain;
-};
-
 struct xonar_info {
 	device_t dev;
 #if defined(__FreeBSD__)
@@ -405,7 +389,6 @@ struct xonar_info {
 	int vol[2];
 	int bufmaxsz, bufsz;
 	int pnum;
-	struct pcm1796_info pcm1796;
 	struct xonar_chinfo chan[MAX_PORTS_PLAY+MAX_PORTS_REC];
 
 	int anti_pop_delay;

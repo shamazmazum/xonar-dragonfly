@@ -91,10 +91,14 @@ static int vol_scale_line = 255;
 static struct pcmchan_caps xonar_caps = { 32000, 192000, xonar_fmt, 0 };
 
 /* ST/STX only. Do we have pcm1796 in other cards? */
-static void pcm1796_write (struct xonar_info *sc, uint8_t reg, uint8_t data)
+static int pcm1796_write (struct xonar_info *sc, uint8_t reg, uint8_t data)
 {
-    uint8_t *sync_reg = &(sc->pcm1796.regs[reg - PCM1796_REGBASE]);
-    cmi8788_write_i2c (sc, XONAR_STX_FRONTDAC, reg, data, sync_reg);
+    return cmi8788_write_i2c (sc, XONAR_STX_FRONTDAC, reg, data);
+}
+
+static int pcm1796_read (struct xonar_info *sc, uint8_t reg)
+{
+    return cmi8788_read_i2c (sc, XONAR_STX_FRONTDAC, reg);
 }
 
 static int
@@ -169,73 +173,89 @@ pcm1796_set_volume(struct xonar_info *sc, int left, int right)
 static int
 pcm1796_get_mute(struct xonar_info *sc)
 {
-    return (sc->pcm1796.regs[PCM1796_REG18] & PCM1796_MUTE) ? 1 : 0;
+    int res = pcm1796_read (sc, 18);
+    if (res != -1) res = (res & PCM1796_MUTE) ? 1: 0;
+    return res;
 }
 
-static void
+static int
 pcm1796_set_mute(struct xonar_info *sc, int mute) 
 {
-	uint16_t reg = sc->pcm1796.regs[PCM1796_REG18];
+	int res = pcm1796_read (sc, 18);
+    if (res == -1)
+        return -1;
 
 	if (mute)
-		pcm1796_write(sc, 18, reg | PCM1796_MUTE);
+		res = pcm1796_write(sc, 18, res | PCM1796_MUTE);
 	else
-		pcm1796_write(sc, 18, reg & ~PCM1796_MUTE);
+		res = pcm1796_write(sc, 18, res & ~PCM1796_MUTE);
+    return res;
 }
 
 static int
 pcm1796_get_deemph(struct xonar_info *sc)
 {
-	return (sc->pcm1796.regs[PCM1796_REG18] & PCM1796_DME) ? 1 : 0;
+    int res = pcm1796_read (sc, 18);
+    if (res != -1) res = (res & PCM1796_DME) ? 1: 0;
+    return res;
 }
 
-static void
+static int
 pcm1796_set_deemph(struct xonar_info *sc, int deemph)
 {
-	uint16_t reg;
-	/* XXX: set DMF */
+    int res = pcm1796_read (sc, 18);
+    if (res == -1)
+        return -1;
 
-	reg = sc->pcm1796.regs[PCM1796_REG18];
 	if (deemph)
-		pcm1796_write(sc, 18, reg | PCM1796_DME);
+		res = pcm1796_write(sc, 18, res | PCM1796_DME);
 	else
-		pcm1796_write(sc, 18, reg & ~PCM1796_DME);
+		res = pcm1796_write(sc, 18, res & ~PCM1796_DME);
+    return res;
 }
 
 static int
 pcm1796_get_rolloff(struct xonar_info *sc)
 {
-	return (sc->pcm1796.regs[PCM1796_REG19] & PCM1796_FLT) ? 1 : 0;
+    int res = pcm1796_read (sc, 19);
+    if (res != -1) res = (res & PCM1796_FLT) ? 1: 0;
+    return res;
 }
 
-static void
+static int
 pcm1796_set_rolloff(struct xonar_info *sc, int rolloff)
 {
-	uint16_t reg;
+    int res = pcm1796_read (sc, 19);
+    if (res == -1)
+        return -1;
 
-	reg = sc->pcm1796.regs[PCM1796_REG19];
 	if (rolloff)
-		pcm1796_write(sc, 19, reg | PCM1796_FLT);
+		res = pcm1796_write(sc, 19, res | PCM1796_FLT);
 	else
-		pcm1796_write(sc, 19, reg & ~PCM1796_FLT);
+		res = pcm1796_write(sc, 19, res & ~PCM1796_FLT);
+    return res;
 }
 
 static int
 pcm1796_get_bypass(struct xonar_info *sc)
 {
-	return (sc->pcm1796.regs[PCM1796_REG20] & PCM1796_DFTH) ? 1 : 0;
+    int res = pcm1796_read (sc, 20);
+    if (res != -1) res = (res & PCM1796_DFTH) ? 1: 0;
+    return res;
 }
 
-static void
+static int
 pcm1796_set_bypass(struct xonar_info *sc, int bypass)
 {
-	uint16_t reg;
+    int res = pcm1796_read (sc, 20);
+    if (res == -1)
+        return -1;
 
-	reg = sc->pcm1796.regs[PCM1796_REG20];
-	if (bypass) /* just disables sound */
-		pcm1796_write(sc, 20, reg | PCM1796_DFTH);
+	if (bypass)
+		res = pcm1796_write(sc, 20, res | PCM1796_DFTH);
 	else
-		pcm1796_write(sc, 20, reg & ~PCM1796_DFTH);
+		res = pcm1796_write(sc, 20, res & ~PCM1796_DFTH);
+    return res;
 }
 
 static void
@@ -966,17 +986,17 @@ xonar_init(struct xonar_info *sc)
 		cmi8788_setandclear_2(sc, GPIO_DATA, GPIO_PIN0, GPIO_PIN8);
 		cmi8788_setandclear_2(sc, I2C_CTRL, TWOWIRE_SPEED_FAST, 0);
 
-		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x5, 0x9, NULL);
-		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x2, 0x0, NULL);
-		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x3, 0x0 | (0 << 3) | 0x0 | 0x1, NULL);
-		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x4, (0 << 1) | 0x0, NULL);
-		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x06, 0x00, NULL);
-		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x07, 0x10, NULL);
-		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x08, 0x00, NULL);
-		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x09, 0x00, NULL);
-		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x16, 0x10, NULL);
-		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x17, 0, NULL);
-		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x5, 0x1, NULL);
+		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x5, 0x9);
+		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x2, 0x0);
+		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x3, 0x0 | (0 << 3) | 0x0 | 0x1);
+		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x4, (0 << 1) | 0x0);
+		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x06, 0x00);
+		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x07, 0x10);
+		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x08, 0x00);
+		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x09, 0x00);
+		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x16, 0x10);
+		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x17, 0);
+		cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x5, 0x1);
 
 		/* Init DAC */
 		pcm1796_write(sc, 20, 0);
@@ -1052,6 +1072,8 @@ sysctl_xonar_mute(SYSCTL_HANDLER_ARGS)
 	if (sc == NULL)
 		return EINVAL;
 	val = pcm1796_get_mute (sc);
+    if (val == -1)
+        return EINVAL;
 	err = sysctl_handle_int(oidp, &val, 0, req);
 	if (err || req->newptr == NULL)
 		return (err);
@@ -1164,6 +1186,8 @@ sysctl_xonar_bypass(SYSCTL_HANDLER_ARGS)
 	if (sc == NULL)
 		return EINVAL;
 	val = pcm1796_get_bypass (sc);
+    if (val == -1)
+        return EINVAL;
 	err = sysctl_handle_int(oidp, &val, 0, req);
 	if (err || req->newptr == NULL)
 		return (err);
@@ -1185,6 +1209,8 @@ sysctl_xonar_deemph(SYSCTL_HANDLER_ARGS)
 	if (sc == NULL)
 		return EINVAL;
 	val = pcm1796_get_deemph (sc);
+    if (val == -1)
+        return EINVAL;
 	err = sysctl_handle_int(oidp, &val, 0, req);
 	if (err || req->newptr == NULL)
 		return (err);

@@ -33,7 +33,7 @@ DEFINE_SETANDCLEAR_N (cmi8788, 1, uint8_t )
 
 /* Not MPSAFE */
 int cmi8788_write_i2c (struct xonar_info *sc, uint8_t codec_num, uint8_t reg,
-					   uint8_t data, uint8_t *sync)
+					   uint8_t data)
 {
 	int count = 50;
 
@@ -44,22 +44,45 @@ int cmi8788_write_i2c (struct xonar_info *sc, uint8_t codec_num, uint8_t reg,
 	}
 	if (count == 0) {
 		device_printf (sc->dev, "i2c timeout\n");
-		return EIO;
+		return -1;
 	}
 
 	/* first write the Register Address into the MAP register */
 	cmi8788_write_1(sc, I2C_MAP, reg);
-
 	/* now write the data */
 	cmi8788_write_1(sc, I2C_DATA, data);
-
 	/* select the codec number to address */
 	cmi8788_write_1(sc, I2C_ADDR, codec_num);
 	DELAY(100);
 
-	if (sync != NULL) *sync = data;
-
 	return 0;
+}
+
+int cmi8788_read_i2c (struct xonar_info *sc, uint8_t codec_num,
+                      uint8_t reg)
+{
+    uint8_t res;
+	int count = 50;
+
+	/* Wait for it to stop being busy */
+	while ((cmi8788_read_2(sc, I2C_CTRL) & TWOWIRE_BUSY) && (count > 0)) {
+		DELAY(10);
+		count--;
+	}
+	if (count == 0) {
+		device_printf (sc->dev, "i2c timeout\n");
+		return -1;
+	}
+
+	/* first write the Register Address into the MAP register */
+	cmi8788_write_1(sc, I2C_MAP, reg);
+    /* select the codec number to address */
+	cmi8788_write_1(sc, I2C_ADDR, codec_num | 0x1);
+    DELAY (100);
+    /* now read the data */
+	res = cmi8788_read_1(sc, I2C_DATA);
+
+	return res;
 }
 
 uint32_t xonar_ac97_read (struct xonar_info *sc, int which, int reg)
