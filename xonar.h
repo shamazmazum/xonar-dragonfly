@@ -387,6 +387,11 @@ struct xonar_info {
 	uint16_t model;
 
 	int vol[2];
+    int vol_offset_hp;
+    int vol_scale_hp;
+    int vol_offset_line;
+    int vol_scale_line;
+
 	int bufmaxsz, bufsz;
 	int pnum;
 	struct xonar_chinfo chan[MAX_PORTS_PLAY+MAX_PORTS_REC];

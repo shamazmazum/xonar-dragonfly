@@ -82,12 +82,6 @@ static u_int32_t xonar_fmt[] = {
 };
 #endif
 
-static int vol_offset_hp = 0;
-static int vol_scale_hp = 255;
-
-static int vol_offset_line = 0;
-static int vol_scale_line = 255;
-
 static struct pcmchan_caps xonar_caps = { 32000, 192000, xonar_fmt, 0 };
 
 /* ST/STX only. Do we have pcm1796 in other cards? */
@@ -122,21 +116,23 @@ static kobj_method_t xonar_ac97_methods[] = {
 AC97_DECLARE(xonar_ac97);
 
 static unsigned int
-pcm1796_vol_scale(int vol, int which)
+pcm1796_vol_scale(struct xonar_info *sc, int vol)
 {
 	int offset, scale;
+    int which = cmi8788_get_output(sc);
+
 	switch (which) {
 	case OUTPUT_LINE:
-		offset = vol_offset_line;
-		scale = vol_scale_line;
+		offset = sc->vol_offset_line;
+		scale = sc->vol_scale_line;
 		break;
 	case OUTPUT_REAR_HP:
-		offset = vol_offset_hp;
-		scale = vol_scale_hp;
+		offset = sc->vol_offset_hp;
+		scale = sc->vol_scale_hp;
 		break;
 	case OUTPUT_HP:
-		offset = vol_offset_hp;
-		scale = vol_scale_hp;
+		offset = sc->vol_offset_hp;
+		scale = sc->vol_scale_hp;
 		break;
 	default:
 		offset = 0;
@@ -153,8 +149,8 @@ pcm1796_set_volume(struct xonar_info *sc, int left, int right)
 	sc->vol[0] = left;
 	sc->vol[1] = right;
 
-	l = pcm1796_vol_scale(left, cmi8788_get_output(sc));
-	r = pcm1796_vol_scale(right, cmi8788_get_output(sc));
+	l = pcm1796_vol_scale(sc, left);
+	r = pcm1796_vol_scale(sc, right);
 
 	if (l & ~(int)0xff) {
 		too_high = 1;
@@ -1003,6 +999,11 @@ xonar_init(struct xonar_info *sc)
 		pcm1796_write(sc, 18, PCM1796_FMT_24L|PCM1796_ATLD);
 		pcm1796_write(sc, 19, 0);
 	}
+
+    sc->vol_offset_hp = 0;
+    sc->vol_scale_hp = 255;
+    sc->vol_offset_line = 0;
+    sc->vol_scale_line = 255;
 	pcm1796_set_volume(sc, 75, 75);
 
 	/* check if MPU401 is enabled in MISC register */
@@ -1380,19 +1381,19 @@ xonar_attach(device_t dev)
 			"Mute DAC");
 	SYSCTL_ADD_UINT (kern_sysctl_ctx(sc->dev),
 			SYSCTL_CHILDREN(kern_sysctl_tree(sc->dev)), OID_AUTO,
-			"vol_offset_hp", CTLFLAG_RW | CTLFLAG_ANYBODY, &vol_offset_hp,
+			"vol_offset_hp", CTLFLAG_RW | CTLFLAG_ANYBODY, &sc->vol_offset_hp,
 			0, "volume offset when output is set to headphones");
 	SYSCTL_ADD_UINT (kern_sysctl_ctx(sc->dev),
 			SYSCTL_CHILDREN(kern_sysctl_tree(sc->dev)), OID_AUTO,
-			"vol_scale_hp", CTLFLAG_RW | CTLFLAG_ANYBODY, &vol_scale_hp,
+			"vol_scale_hp", CTLFLAG_RW | CTLFLAG_ANYBODY, &sc->vol_scale_hp,
 			0, "volume scale when output is set to headphones");
 	SYSCTL_ADD_UINT (kern_sysctl_ctx(sc->dev),
 			SYSCTL_CHILDREN(kern_sysctl_tree(sc->dev)), OID_AUTO,
-			"vol_offset_line", CTLFLAG_RW | CTLFLAG_ANYBODY, &vol_offset_line,
+			"vol_offset_line", CTLFLAG_RW | CTLFLAG_ANYBODY, &sc->vol_offset_line,
 			0, "volume offset when output is set to line_out");
 	SYSCTL_ADD_UINT (kern_sysctl_ctx(sc->dev),
 			SYSCTL_CHILDREN(kern_sysctl_tree(sc->dev)), OID_AUTO,
-			"vol_scale_line", CTLFLAG_RW | CTLFLAG_ANYBODY, &vol_scale_line,
+			"vol_scale_line", CTLFLAG_RW | CTLFLAG_ANYBODY, &sc->vol_scale_line,
 			0, "volume scale when output is set to line_out");
 
 	return (0);
