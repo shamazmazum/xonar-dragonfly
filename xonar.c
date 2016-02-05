@@ -166,7 +166,12 @@ pcm1796_set_volume(struct xonar_info *sc, int left, int right)
 	pcm1796_write(sc, 17, r);
 }
 
-#if 0
+static int
+pcm1796_get_mute(struct xonar_info *sc)
+{
+    return (sc->pcm1796.regs[PCM1796_REG18] & PCM1796_MUTE) ? 1 : 0;
+}
+
 static void
 pcm1796_set_mute(struct xonar_info *sc, int mute) 
 {
@@ -177,7 +182,6 @@ pcm1796_set_mute(struct xonar_info *sc, int mute)
 	else
 		pcm1796_write(sc, 18, reg & ~PCM1796_MUTE);
 }
-#endif
 
 static int
 pcm1796_get_deemph(struct xonar_info *sc)
@@ -1037,6 +1041,27 @@ xonar_cleanup(struct xonar_info *sc)
 }
 
 static int
+sysctl_xonar_mute(SYSCTL_HANDLER_ARGS)
+{
+	struct xonar_info *sc;
+	device_t dev;
+	int val, err;
+
+	dev = oidp->oid_arg1;
+	sc = pcm_getdevinfo(dev);
+	if (sc == NULL)
+		return EINVAL;
+	val = pcm1796_get_mute (sc);
+	err = sysctl_handle_int(oidp, &val, 0, req);
+	if (err || req->newptr == NULL)
+		return (err);
+	if (val < 0 || val > 1)
+		return (EINVAL);
+	pcm1796_set_mute(sc, val);
+	return err;
+}
+
+static int
 sysctl_xonar_rec_monitor(SYSCTL_HANDLER_ARGS)
 {
 	struct xonar_info *sc;
@@ -1322,6 +1347,11 @@ xonar_attach(device_t dev)
 			"monitor", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY, sc->dev,
 			sizeof(sc->dev), sysctl_xonar_rec_monitor, "I",
 			"Enable recording monitor");
+    SYSCTL_ADD_PROC(kern_sysctl_ctx(sc->dev),
+			SYSCTL_CHILDREN(kern_sysctl_tree(sc->dev)), OID_AUTO,
+			"mute", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY, sc->dev,
+			sizeof(sc->dev), sysctl_xonar_mute, "I",
+			"Mute DAC");
 	SYSCTL_ADD_UINT (kern_sysctl_ctx(sc->dev),
 			SYSCTL_CHILDREN(kern_sysctl_tree(sc->dev)), OID_AUTO,
 			"vol_offset_hp", CTLFLAG_RW | CTLFLAG_ANYBODY, &vol_offset_hp,
