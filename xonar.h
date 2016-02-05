@@ -337,20 +337,6 @@
 #define CS4362A_VOL(x) \
 	(char)((x) == 0 ? 0xFF : (0x60 - ((x)*96/100)))
 
-#define UNUSED_CMI9780_CONTROLS ( \
-        SOUND_MASK_VOLUME | \
-        SOUND_MASK_PCM | \
-        SOUND_MASK_REARVOL | \
-        SOUND_MASK_CENTERVOL | \
-        SOUND_MASK_SIDEVOL | \
-        SOUND_MASK_SPEAKER | \
-        SOUND_MASK_ALTPCM | \
-        SOUND_MASK_VIDEO | \
-        SOUND_MASK_DEPTH | \
-        SOUND_MASK_MONO | \
-        SOUND_MASK_PHONE \
-        )
-
 struct xonar_chinfo {
 	struct snd_dbuf		*buffer;
 	struct pcm_channel 	*channel;
