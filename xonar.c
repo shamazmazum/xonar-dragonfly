@@ -37,12 +37,6 @@
 static char *output_str[] = {"Line-Out", "RearHeadphones", "Headphones"};
 static char *rolloff_str[] = {"sharp", "slow"};
 
-#if defined(__DragonFly__) && __DragonFly_version < 400102
-/* stubs */
-#define AFMT_BIT(fmt) 16
-#define AFMT_CHANNEL(fmt) 2
-#endif
-
 static int xonar_init(struct xonar_info *);
 static void xonar_cleanup(struct xonar_info *);
 
@@ -66,21 +60,12 @@ static const struct {
 #endif
 };
 
-#if defined __DragonFly__ && __DragonFly_version < 400102
-static u_int32_t xonar_fmt[] = {
-    AFMT_S16_LE | AFMT_STEREO,
-    AFMT_S24_LE | AFMT_STEREO,
-    AFMT_S32_LE | AFMT_STEREO,
-    0
-};
-#else
 static u_int32_t xonar_fmt[] = {
     SND_FORMAT(AFMT_S16_LE, 2, 0),
     SND_FORMAT(AFMT_S24_LE, 2, 0),
     SND_FORMAT(AFMT_S32_LE, 2, 0),
     0
 };
-#endif
 
 static struct pcmchan_caps xonar_caps = { 32000, 192000, xonar_fmt, 0 };
 
@@ -722,8 +707,6 @@ static kobj_method_t xonar_chan_methods[] = {
 };
 CHANNEL_DECLARE(xonar_chan);
 
-#if defined(__FreeBSD__) || \
-    (defined(__DragonFly__) && __DragonFly_version >= 400102)
 /* Copied from OSS driver */
 static void
 ac97_init (struct xonar_info *sc)
@@ -765,7 +748,6 @@ ac97_init (struct xonar_info *sc)
 
     xonar_ac97_write(sc, 0, 0x71, 0x0001);
 }
-#endif
 
 /* mixer interface */
 static int
@@ -775,15 +757,12 @@ xonar_mixer_init(struct snd_mixer *m)
     int devs;
     int rec_devs;
 
-#if defined(__FreeBSD__) || \
-    (defined(__DragonFly__) && __DragonFly_version >= 400102)
     /* Create AC97 submixer */
     if (sc->ac97_codec != NULL) {
         sc->ac97_mixer = mixer_create (sc->dev, ac97_getmixerclass(), sc->ac97_codec, "ac97");
         /* Here comes AC97 initialization, as mixer_create resets all configuration made to is before */
         ac97_init (sc);
     }
-#endif
 
     devs = SOUND_MASK_VOLUME;
     if (sc->ac97_mixer != NULL) {
@@ -807,8 +786,6 @@ xonar_mixer_init(struct snd_mixer *m)
 static int
 xonar_mixer_uninit (struct snd_mixer *m)
 {
-#if defined(__FreeBSD__) || \
-    (defined(__DragonFly__) && __DragonFly_version >= 400102)
     struct xonar_info *sc = mix_getdevinfo (m);
     int err = 0;
 
@@ -818,7 +795,6 @@ xonar_mixer_uninit (struct snd_mixer *m)
         sc->ac97_mixer = NULL;
         sc->ac97_codec = NULL; /* It also frees the codec */
     }
-#endif
     return 0;
 }
 
@@ -832,12 +808,8 @@ xonar_mixer_set(struct snd_mixer *m, unsigned dev, unsigned left, unsigned right
         pcm1796_set_volume(sc, left, right);
     }
 
-#if defined(__FreeBSD__) ||                                     \
-    (defined(__DragonFly__) && __DragonFly_version >= 400102)
-    /* Pass it to AC97 */
     if (sc->ac97_mixer != NULL)
         mix_set (sc->ac97_mixer, dev, left, right);
-#endif
     snd_mtxunlock(sc->lock);
     return (0);
 }
@@ -859,15 +831,12 @@ xonar_mixer_setrecsrc(struct snd_mixer *m, uint32_t src)
         xonar_ac97_write (sc, 0, 0x72, xonar_ac97_read (sc, 0, 0x72) & ~0x1);
         recmask = SOUND_MASK_LINE;
     }
-#if defined(__FreeBSD__) ||                                         \
-    (defined(__DragonFly__) && __DragonFly_version >= 400102)
     else if ((src & SOUND_MASK_MIC) && (sc->ac97_mixer != NULL) &&
              (mix_setrecsrc (sc->ac97_mixer, src) == 0)) {
         cmi8788_setandclear_2 (sc, GPIO_DATA, GPIO_PIN8, 0);
         xonar_ac97_write (sc, 0, 0x72, xonar_ac97_read (sc, 0, 0x72) | 0x1);
         recmask = SOUND_MASK_MIC;
     }
-#endif
     snd_mtxunlock (sc->lock);
 
     return recmask;
@@ -1049,10 +1018,10 @@ xonar_cleanup(struct xonar_info *sc)
         snd_mtxfree(sc->lock);
         sc->lock = NULL;
     }
-    /* Usually we rely on mixer_uninit to do this,
-     * but in DragonFlyBSD we cannot initialize AC97 mixer,
-     * so we destroy codec here (it was useless anyway in that case)
-     */
+    /*
+      Usually we rely on mixer_uninit to do this,
+      but better safe than sorry.
+    */
     if (sc->ac97_codec) {
         ac97_destroy (sc->ac97_codec);
         sc->ac97_codec = NULL;
@@ -1349,50 +1318,50 @@ xonar_attach(device_t dev)
          PCM_KLDSTRING(snd_cmi8788));
     pcm_setstatus(dev, status);
 
-    SYSCTL_ADD_PROC(kern_sysctl_ctx(sc->dev),
-            SYSCTL_CHILDREN(kern_sysctl_tree(sc->dev)), OID_AUTO,
+    SYSCTL_ADD_PROC(device_get_sysctl_ctx(sc->dev),
+            SYSCTL_CHILDREN(device_get_sysctl_tree(sc->dev)), OID_AUTO,
             "output", CTLTYPE_STRING | CTLFLAG_RW | CTLFLAG_ANYBODY, sc->dev,
             sizeof(sc->dev), sysctl_xonar_output, "A",
             "Set output direction (Line-Out/RearHeadphones/Headphones)");
-    SYSCTL_ADD_PROC(kern_sysctl_ctx(sc->dev),
-            SYSCTL_CHILDREN(kern_sysctl_tree(sc->dev)), OID_AUTO,
+    SYSCTL_ADD_PROC(device_get_sysctl_ctx(sc->dev),
+            SYSCTL_CHILDREN(device_get_sysctl_tree(sc->dev)), OID_AUTO,
             "rolloff", CTLTYPE_STRING | CTLFLAG_RW | CTLFLAG_ANYBODY, sc->dev,
             sizeof(sc->dev), sysctl_xonar_rolloff, "A",
             "Set rolloff (sharp/slow)");
-    SYSCTL_ADD_PROC(kern_sysctl_ctx(sc->dev),
-            SYSCTL_CHILDREN(kern_sysctl_tree(sc->dev)), OID_AUTO,
+    SYSCTL_ADD_PROC(device_get_sysctl_ctx(sc->dev),
+            SYSCTL_CHILDREN(device_get_sysctl_tree(sc->dev)), OID_AUTO,
             "de-emph", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY, sc->dev,
             sizeof(sc->dev), sysctl_xonar_deemph, "I",
             "Set de-emphasis: 0 - disabled, 1 - enabled");
-    SYSCTL_ADD_PROC(kern_sysctl_ctx(sc->dev),
-            SYSCTL_CHILDREN(kern_sysctl_tree(sc->dev)), OID_AUTO,
+    SYSCTL_ADD_PROC(device_get_sysctl_ctx(sc->dev),
+            SYSCTL_CHILDREN(device_get_sysctl_tree(sc->dev)), OID_AUTO,
             "dfbypass", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY, sc->dev,
             sizeof(sc->dev), sysctl_xonar_bypass, "I",
             "Set digital filter bypass: 0 - disabled, 1 - enabled");
-    SYSCTL_ADD_PROC(kern_sysctl_ctx(sc->dev),
-            SYSCTL_CHILDREN(kern_sysctl_tree(sc->dev)), OID_AUTO,
+    SYSCTL_ADD_PROC(device_get_sysctl_ctx(sc->dev),
+            SYSCTL_CHILDREN(device_get_sysctl_tree(sc->dev)), OID_AUTO,
             "monitor", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY, sc->dev,
             sizeof(sc->dev), sysctl_xonar_rec_monitor, "I",
             "Enable recording monitor");
-    SYSCTL_ADD_PROC(kern_sysctl_ctx(sc->dev),
-            SYSCTL_CHILDREN(kern_sysctl_tree(sc->dev)), OID_AUTO,
+    SYSCTL_ADD_PROC(device_get_sysctl_ctx(sc->dev),
+            SYSCTL_CHILDREN(device_get_sysctl_tree(sc->dev)), OID_AUTO,
             "mute", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY, sc->dev,
             sizeof(sc->dev), sysctl_xonar_mute, "I",
             "Mute DAC");
-    SYSCTL_ADD_UINT (kern_sysctl_ctx(sc->dev),
-            SYSCTL_CHILDREN(kern_sysctl_tree(sc->dev)), OID_AUTO,
+    SYSCTL_ADD_UINT (device_get_sysctl_ctx(sc->dev),
+            SYSCTL_CHILDREN(device_get_sysctl_tree(sc->dev)), OID_AUTO,
             "vol_offset_hp", CTLFLAG_RW | CTLFLAG_ANYBODY, &sc->vol_offset_hp,
             0, "volume offset when output is set to headphones");
-    SYSCTL_ADD_UINT (kern_sysctl_ctx(sc->dev),
-            SYSCTL_CHILDREN(kern_sysctl_tree(sc->dev)), OID_AUTO,
+    SYSCTL_ADD_UINT (device_get_sysctl_ctx(sc->dev),
+            SYSCTL_CHILDREN(device_get_sysctl_tree(sc->dev)), OID_AUTO,
             "vol_scale_hp", CTLFLAG_RW | CTLFLAG_ANYBODY, &sc->vol_scale_hp,
             0, "volume scale when output is set to headphones");
-    SYSCTL_ADD_UINT (kern_sysctl_ctx(sc->dev),
-            SYSCTL_CHILDREN(kern_sysctl_tree(sc->dev)), OID_AUTO,
+    SYSCTL_ADD_UINT (device_get_sysctl_ctx(sc->dev),
+            SYSCTL_CHILDREN(device_get_sysctl_tree(sc->dev)), OID_AUTO,
             "vol_offset_line", CTLFLAG_RW | CTLFLAG_ANYBODY, &sc->vol_offset_line,
             0, "volume offset when output is set to line_out");
-    SYSCTL_ADD_UINT (kern_sysctl_ctx(sc->dev),
-            SYSCTL_CHILDREN(kern_sysctl_tree(sc->dev)), OID_AUTO,
+    SYSCTL_ADD_UINT (device_get_sysctl_ctx(sc->dev),
+            SYSCTL_CHILDREN(device_get_sysctl_tree(sc->dev)), OID_AUTO,
             "vol_scale_line", CTLFLAG_RW | CTLFLAG_ANYBODY, &sc->vol_scale_line,
             0, "volume scale when output is set to line_out");
 

@@ -41,16 +41,4 @@
 	/* flags */ 0, /* lock fn */ busdma_lock_mutex,					\
 	/* lock */ lock, /* result */ tag)
 #endif
-
-/* stuff related to pcm driver */
-#if defined(__DragonFly__) && __DragonFly_version < 400102
-#define pcm_sndbuf_alloc(b, dmatag, dmaflags, size) sndbuf_alloc (b, dmatag, size)
-/* pcm driver manages sysctls in DragonFly */
-#define kern_sysctl_ctx(dev) snd_sysctl_tree(dev)
-#define kern_sysctl_tree(dev) snd_sysctl_tree_top(dev)
-#else
-#define pcm_sndbuf_alloc(b, dmatag, dmaflags, size) sndbuf_alloc (b, dmatag, dmaflags, size)
-#define kern_sysctl_ctx(dev) device_get_sysctl_ctx(dev)
-#define kern_sysctl_tree(dev) device_get_sysctl_tree(dev)
-#endif
 #endif
