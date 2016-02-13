@@ -176,28 +176,6 @@ pcm1796_set_mute(struct xonar_info *sc, int mute)
 }
 
 static int
-pcm1796_get_deemph(struct xonar_info *sc)
-{
-    int res = pcm1796_read (sc, 18);
-    if (res != -1) res = (res & PCM1796_DME) ? 1: 0;
-    return res;
-}
-
-static int
-pcm1796_set_deemph(struct xonar_info *sc, int deemph)
-{
-    int res = pcm1796_read (sc, 18);
-    if (res == -1)
-        return -1;
-
-    if (deemph)
-        res = pcm1796_write(sc, 18, res | PCM1796_DME);
-    else
-        res = pcm1796_write(sc, 18, res & ~PCM1796_DME);
-    return res;
-}
-
-static int
 pcm1796_get_rolloff(struct xonar_info *sc)
 {
     int res = pcm1796_read (sc, 19);
@@ -216,28 +194,6 @@ pcm1796_set_rolloff(struct xonar_info *sc, int rolloff)
         res = pcm1796_write(sc, 19, res | PCM1796_FLT);
     else
         res = pcm1796_write(sc, 19, res & ~PCM1796_FLT);
-    return res;
-}
-
-static int
-pcm1796_get_bypass(struct xonar_info *sc)
-{
-    int res = pcm1796_read (sc, 20);
-    if (res != -1) res = (res & PCM1796_DFTH) ? 1: 0;
-    return res;
-}
-
-static int
-pcm1796_set_bypass(struct xonar_info *sc, int bypass)
-{
-    int res = pcm1796_read (sc, 20);
-    if (res == -1)
-        return -1;
-
-    if (bypass)
-        res = pcm1796_write(sc, 20, res | PCM1796_DFTH);
-    else
-        res = pcm1796_write(sc, 20, res & ~PCM1796_DFTH);
     return res;
 }
 
@@ -1147,52 +1103,6 @@ sysctl_xonar_rolloff(SYSCTL_HANDLER_ARGS)
     return err;
 }
 
-static int
-sysctl_xonar_bypass(SYSCTL_HANDLER_ARGS) 
-{
-    struct xonar_info *sc;
-    device_t dev;
-    int val, err;
-
-    dev = oidp->oid_arg1;
-    sc = pcm_getdevinfo(dev);
-    if (sc == NULL)
-        return EINVAL;
-    val = pcm1796_get_bypass (sc);
-    if (val == -1)
-        return EINVAL;
-    err = sysctl_handle_int(oidp, &val, 0, req);
-    if (err || req->newptr == NULL)
-        return (err);
-    if (val < 0 || val > 1)
-        return (EINVAL);
-    pcm1796_set_bypass(sc, val);
-    return err;
-}
-
-static int
-sysctl_xonar_deemph(SYSCTL_HANDLER_ARGS) 
-{
-    struct xonar_info *sc;
-    device_t dev;
-    int val, err;
-
-    dev = oidp->oid_arg1;
-    sc = pcm_getdevinfo(dev);
-    if (sc == NULL)
-        return EINVAL;
-    val = pcm1796_get_deemph (sc);
-    if (val == -1)
-        return EINVAL;
-    err = sysctl_handle_int(oidp, &val, 0, req);
-    if (err || req->newptr == NULL)
-        return (err);
-    if (val < 0 || val > 1)
-        return (EINVAL);
-    pcm1796_set_deemph(sc, val);
-    return err;
-}
-
 static void
 xonar_intr(void *p) {
     struct xonar_info *sc = p;
@@ -1331,16 +1241,6 @@ xonar_attach(device_t dev)
             "rolloff", CTLTYPE_STRING | CTLFLAG_RW | CTLFLAG_ANYBODY, sc->dev,
             sizeof(sc->dev), sysctl_xonar_rolloff, "A",
             "Set rolloff (sharp/slow)");
-    SYSCTL_ADD_PROC(device_get_sysctl_ctx(sc->dev),
-            SYSCTL_CHILDREN(device_get_sysctl_tree(sc->dev)), OID_AUTO,
-            "de-emph", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY, sc->dev,
-            sizeof(sc->dev), sysctl_xonar_deemph, "I",
-            "Set de-emphasis: 0 - disabled, 1 - enabled");
-    SYSCTL_ADD_PROC(device_get_sysctl_ctx(sc->dev),
-            SYSCTL_CHILDREN(device_get_sysctl_tree(sc->dev)), OID_AUTO,
-            "dfbypass", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY, sc->dev,
-            sizeof(sc->dev), sysctl_xonar_bypass, "I",
-            "Set digital filter bypass: 0 - disabled, 1 - enabled");
     SYSCTL_ADD_PROC(device_get_sysctl_ctx(sc->dev),
             SYSCTL_CHILDREN(device_get_sysctl_tree(sc->dev)), OID_AUTO,
             "monitor", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY, sc->dev,

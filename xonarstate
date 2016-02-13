@@ -35,7 +35,7 @@ xonarstate_stop()
     for unit in `get_xonar_units`; do
         sysctl -e dev.pcm.$unit.output > $xonar_state_path/xonarstate-$unit
         sysctl -e dev.pcm.$unit.rolloff >> $xonar_state_path/xonarstate-$unit
-        sysctl -e dev.pcm.$unit.de-emph >> $xonar_state_path/xonarstate-$unit
+        sysctl -e dev.pcm.$unit.mute >> $xonar_state_path/xonarstate-$unit
 
         sysctl -e dev.pcm.$unit.vol_offset_line >> $xonar_state_path/xonarstate-$unit
         sysctl -e dev.pcm.$unit.vol_scale_line >> $xonar_state_path/xonarstate-$unit
