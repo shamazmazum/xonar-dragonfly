@@ -7,12 +7,10 @@
 
 /* malloc / printf stuff */
 #if defined __DragonFly__
-#define kern_printf(fmt, ...) kprintf (fmt, ##__VA_ARGS__)
 #define kern_snprintf(str, size, fmt, ...) ksnprintf (str, size, fmt, ##__VA_ARGS__)
 #define kern_malloc(size, type, flags) kmalloc (size, type, flags)
 #define kern_free(addr, type) kfree (addr, type)
 #elif defined __FreeBSD__
-#define kern_printf(fmt, ...) printf (fmt, ##__VA_ARGS__)
 #define kern_snprintf(str, size, fmt, ...) snprintf (str, size, fmt, ##__VA_ARGS__)
 #define kern_malloc(size, type, flags) malloc (size, type, flags)
 #define kern_free(addr, type) free (addr, type)

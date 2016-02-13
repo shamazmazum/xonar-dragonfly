@@ -387,6 +387,8 @@ struct xonar_info {
 
 	struct ac97_info *ac97_codec;
 	struct snd_mixer *ac97_mixer;
+
+    int debug;
 };
 
 #endif

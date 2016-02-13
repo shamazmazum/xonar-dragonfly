@@ -67,6 +67,8 @@ static u_int32_t xonar_fmt[] = {
     0
 };
 
+#define XONAR_DEBUG(format, ...) if (sc->debug) device_printf (sc->dev, format, ##__VA_ARGS__)
+
 static struct pcmchan_caps xonar_caps = { 32000, 192000, xonar_fmt, 0 };
 
 /* ST/STX only. Do we have pcm1796 in other cards? */
@@ -492,8 +494,8 @@ xonar_chan_setformat(kobj_t obj, void *data, u_int32_t format)
     int bits, bits_where;
     bits_where = 0;
 
-    DEB(device_printf(sc->dev, "%s %dbits %dchans\n", __func__, AFMT_BIT(format),
-                      AFMT_CHANNEL(format)));
+    XONAR_DEBUG("%s %dbits %dchans\n", __func__, AFMT_BIT(format),
+                AFMT_CHANNEL(format));
 
     if (format & AFMT_S32_LE)
         bits = 8;
@@ -502,7 +504,7 @@ xonar_chan_setformat(kobj_t obj, void *data, u_int32_t format)
     else if (format & AFMT_S24_LE)
         bits = 4;
     else {
-        kern_printf("format unknown\n");
+        device_printf(sc->dev, "format unknown\n");
         return 1;
     }
 
@@ -537,8 +539,8 @@ xonar_prepare_input(struct xonar_chinfo *ch)
         ch->irq_mask = 0x2;
         xonar_chan_reset(ch, 0x2);
 
-        DEB(device_printf(sc->dev, "buffer addr = 0x%x size = %d\n",
-                          addr, sndbuf_getsize(ch->buffer)));
+        XONAR_DEBUG("buffer addr = 0x%x size = %d\n",
+                    addr, sndbuf_getsize(ch->buffer));
 
         cmi8788_write_4(sc, RECB_ADDR, addr);
         cmi8788_write_2(sc, RECB_SIZE, sc->bufsz / 4 - 1);
@@ -584,8 +586,8 @@ xonar_prepare_output(struct xonar_chinfo *ch)
             break;
         }
 
-        DEB(device_printf(sc->dev, "buffer addr = 0x%x size = %d\n",
-                          addr, sndbuf_getsize(ch->buffer)));
+        XONAR_DEBUG("buffer addr = 0x%x size = %d\n",
+                    addr, sndbuf_getsize(ch->buffer));
 
         cmi8788_write_4(sc, MULTICH_ADDR, addr);
         cmi8788_write_4(sc, MULTICH_SIZE, sc->bufsz / 4 - 1);
@@ -624,9 +626,10 @@ xonar_chan_trigger(kobj_t obj, void *data, int go)
     snd_mtxlock(sc->lock);
     switch (go) {
     case PCMTRIG_START:
-        DEB(device_printf(sc->dev, "trigger start\n"));
-        DEB(device_printf(sc->dev, "bufsz = %d\n", (int)sc->bufsz));
-        DEB(device_printf(sc->dev, "chan state = 0x%x\n", ch->state));
+        XONAR_DEBUG("trigger start\n"
+                    "bufsz = %d\n"
+                    "chan state = 0x%x\n",
+                    (int)sc->bufsz, ch->state);
         if (ch->state == CHAN_STATE_ACTIVE)
             break;
         if (ch->state == CHAN_STATE_INIT)
@@ -640,7 +643,7 @@ xonar_chan_trigger(kobj_t obj, void *data, int go)
 
     case PCMTRIG_ABORT:
     case PCMTRIG_STOP:
-        DEB(device_printf(sc->dev, "trigger stop\n"));
+        XONAR_DEBUG("trigger stop\n");
         if (!(ch->state == CHAN_STATE_ACTIVE))
             break;
         ch->state = CHAN_STATE_INACTIVE;
@@ -1364,6 +1367,10 @@ xonar_attach(device_t dev)
             SYSCTL_CHILDREN(device_get_sysctl_tree(sc->dev)), OID_AUTO,
             "vol_scale_line", CTLFLAG_RW | CTLFLAG_ANYBODY, &sc->vol_scale_line,
             0, "volume scale when output is set to line_out");
+    SYSCTL_ADD_INT (device_get_sysctl_ctx(sc->dev),
+            SYSCTL_CHILDREN(device_get_sysctl_tree(sc->dev)), OID_AUTO,
+            "debug", CTLFLAG_RW | CTLFLAG_ANYBODY, &sc->debug,
+            0, "Enable debug output");
 
     return (0);
 bad:
