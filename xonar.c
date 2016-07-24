@@ -176,6 +176,28 @@ pcm1796_set_mute(struct xonar_info *sc, int mute)
 }
 
 static int
+pcm1796_get_inzd(struct xonar_info *sc)
+{
+    int res = pcm1796_read (sc, 19);
+    if (res != -1) res = (res & PCM1796_INZD) ? 1: 0;
+    return res;
+}
+
+static int
+pcm1796_set_inzd(struct xonar_info *sc, int inzd)
+{
+    int res = pcm1796_read (sc, 19);
+    if (res == -1)
+        return -1;
+
+    if (inzd)
+        res = pcm1796_write(sc, 19, res | PCM1796_INZD);
+    else
+        res = pcm1796_write(sc, 19, res & ~PCM1796_INZD);
+    return res;
+}
+
+static int
 pcm1796_get_rolloff(struct xonar_info *sc)
 {
     int res = pcm1796_read (sc, 19);
@@ -412,6 +434,8 @@ xonar_chan_setspeed(kobj_t obj, void *data, u_int32_t speed)
     struct xonar_info *sc = ch->parent;
     int i2s_rate, i2s_rate_where, cs53x1_value;
 
+    XONAR_DEBUG("%s speed=%u\n", __func__, speed);
+
     i2s_rate = i2s_get_rate(speed);
     i2s_rate_where = 0;
     switch (ch->dir) {
@@ -450,7 +474,7 @@ xonar_chan_setformat(kobj_t obj, void *data, u_int32_t format)
     int bits, bits_where;
     bits_where = 0;
 
-    XONAR_DEBUG("%s %dbits %dchans\n", __func__, AFMT_BIT(format),
+    XONAR_DEBUG("%s %d bits, %d chans\n", __func__, AFMT_BIT(format),
                 AFMT_CHANNEL(format));
 
     if (format & AFMT_S32_LE)
@@ -582,10 +606,8 @@ xonar_chan_trigger(kobj_t obj, void *data, int go)
     snd_mtxlock(sc->lock);
     switch (go) {
     case PCMTRIG_START:
-        XONAR_DEBUG("trigger start\n"
-                    "bufsz = %d\n"
-                    "chan state = 0x%x\n",
-                    (int)sc->bufsz, ch->state);
+        XONAR_DEBUG("trigger start, bufsz = %d, chan state = 0x%x\n",
+                    sc->bufsz, ch->state);
         if (ch->state == CHAN_STATE_ACTIVE)
             break;
         if (ch->state == CHAN_STATE_INIT)
@@ -1034,12 +1056,37 @@ sysctl_xonar_rec_monitor(SYSCTL_HANDLER_ARGS)
 }
 
 static int
+sysctl_xonar_inzd(SYSCTL_HANDLER_ARGS)
+{
+    struct xonar_info *sc;
+    device_t dev;
+    int val, err;
+
+    dev = oidp->oid_arg1;
+    sc = pcm_getdevinfo(dev);
+    if (sc == NULL)
+        return EINVAL;
+    val = pcm1796_get_inzd (sc);
+    if (val == -1)
+        return EINVAL;
+    err = sysctl_handle_int(oidp, &val, 0, req);
+    if (err || req->newptr == NULL)
+        return (err);
+    if (val < 0 || val > 1)
+        return (EINVAL);
+    pcm1796_set_inzd(sc, val);
+    return err;
+}
+
+
+static int
 sysctl_xonar_output(SYSCTL_HANDLER_ARGS) 
 {
     struct xonar_info *sc;
     device_t dev;
     int val, old_val, err, i;
     char buf[20];
+    char *endptr;
 
     dev = oidp->oid_arg1;
     sc = pcm_getdevinfo(dev);
@@ -1050,19 +1097,24 @@ sysctl_xonar_output(SYSCTL_HANDLER_ARGS)
     if (val < 0 || val >= ARRAY_SIZE (output_str))
         return EINVAL;
 
-    strcpy (buf, output_str[val]);
+    strncpy (buf, output_str[val], sizeof(buf));
     err = sysctl_handle_string(oidp, buf, sizeof(buf), req);
     if (err || req->newptr == NULL)
         return (err);
 
-    old_val = val; val = -1;
-    for (i = 0; i < ARRAY_SIZE (output_str); i++) {
-        if (strcmp (buf, output_str[i]) == 0) {
-            val = i;
-            break;
+    old_val = val;
+    if (buf[0] == '\0') return EINVAL;
+    val = strtol (buf, &endptr, 10);
+    if (*endptr != '\0') {
+        val = -1;
+        for (i = 0; i < ARRAY_SIZE (output_str); i++) {
+            if (strncmp (buf, output_str[i], sizeof (buf)) == 0) {
+                val = i;
+                break;
+            }
         }
     }
-    if (val == -1)
+    if (val < 0 || val > ARRAY_SIZE (output_str))
         return (EINVAL);
     if (val != old_val) cmi8788_set_output(sc, val);
     return err;
@@ -1075,6 +1127,7 @@ sysctl_xonar_rolloff(SYSCTL_HANDLER_ARGS)
     device_t dev;
     int val, err, i;
     char buf[20];
+    char *endptr;
 
     dev = oidp->oid_arg1;
     sc = pcm_getdevinfo(dev);
@@ -1085,21 +1138,27 @@ sysctl_xonar_rolloff(SYSCTL_HANDLER_ARGS)
     if (val < 0 || val >= ARRAY_SIZE(rolloff_str))
         return EINVAL;
 
-    strcpy (buf, rolloff_str[val]);
+    strncpy (buf, rolloff_str[val], sizeof (buf));
     err = sysctl_handle_string(oidp, buf, sizeof(buf), req);
     if (err || req->newptr == NULL)
         return (err);
 
-    val = -1;
-    for (i = 0; i < ARRAY_SIZE (rolloff_str); i++) {
-        if (strcmp (buf, rolloff_str[i]) == 0) {
-            val = i;
-            break;
+    if (buf[0] == '\0')
+        return EINVAL;
+    val = strtol (buf, &endptr, 10);
+    if (*endptr != '\0') {
+        val = -1;
+        for (i = 0; i < ARRAY_SIZE (rolloff_str); i++) {
+            if (strncmp (buf, rolloff_str[i], sizeof (buf)) == 0) {
+                val = i;
+                break;
+            }
         }
     }
-    if (val == -1)
-        return (EINVAL);
-    pcm1796_set_rolloff(sc, val);
+
+    if ((val < 0) || (val > 1))
+        return EINVAL;
+    pcm1796_set_rolloff (sc, val);
     return err;
 }
 
@@ -1235,12 +1294,12 @@ xonar_attach(device_t dev)
             SYSCTL_CHILDREN(device_get_sysctl_tree(sc->dev)), OID_AUTO,
             "output", CTLTYPE_STRING | CTLFLAG_RW | CTLFLAG_ANYBODY, sc->dev,
             sizeof(sc->dev), sysctl_xonar_output, "A",
-            "Set output direction (Line-Out/RearHeadphones/Headphones)");
+            "Set output direction (Line-Out=0/RearHeadphones=1/Headphones=2)");
     SYSCTL_ADD_PROC(device_get_sysctl_ctx(sc->dev),
             SYSCTL_CHILDREN(device_get_sysctl_tree(sc->dev)), OID_AUTO,
             "rolloff", CTLTYPE_STRING | CTLFLAG_RW | CTLFLAG_ANYBODY, sc->dev,
             sizeof(sc->dev), sysctl_xonar_rolloff, "A",
-            "Set rolloff (sharp/slow)");
+            "Sharp rolloff = 0, slow rolloff = 1");
     SYSCTL_ADD_PROC(device_get_sysctl_ctx(sc->dev),
             SYSCTL_CHILDREN(device_get_sysctl_tree(sc->dev)), OID_AUTO,
             "monitor", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY, sc->dev,
@@ -1251,6 +1310,11 @@ xonar_attach(device_t dev)
             "mute", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY, sc->dev,
             sizeof(sc->dev), sysctl_xonar_mute, "I",
             "Mute DAC");
+    SYSCTL_ADD_PROC(device_get_sysctl_ctx(sc->dev),
+            SYSCTL_CHILDREN(device_get_sysctl_tree(sc->dev)), OID_AUTO,
+            "inzd", CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_ANYBODY, sc->dev,
+            sizeof(sc->dev), sysctl_xonar_inzd, "I",
+            "Infinite zero detect mute");
     SYSCTL_ADD_UINT (device_get_sysctl_ctx(sc->dev),
             SYSCTL_CHILDREN(device_get_sysctl_tree(sc->dev)), OID_AUTO,
             "vol_offset_hp", CTLFLAG_RW | CTLFLAG_ANYBODY, &sc->vol_offset_hp,
