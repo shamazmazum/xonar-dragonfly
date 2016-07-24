@@ -441,6 +441,10 @@ xonar_chan_setspeed(kobj_t obj, void *data, u_int32_t speed)
     switch (ch->dir) {
     case PCMDIR_PLAY:
         i2s_rate_where = I2S_MULTICH_FORMAT;
+        if (speed <= 88000)
+            pcm1796_write(sc, 20, PCM1796_OS_64);
+        else
+            pcm1796_write(sc, 20, PCM1796_OS_32);
         break;
     case PCMDIR_REC:
         switch (ch->adc_type) {
@@ -459,29 +463,19 @@ xonar_chan_setspeed(kobj_t obj, void *data, u_int32_t speed)
         break;
     }
 
-    /*
-     * Vasily:
-     * XXX: This is totally empirical. At least this works on ST.
-     * Without this sample rates > 48000 will produce total silence.
-     */
-    if (speed <= 48000)
-    {
-        pcm1796_write(sc, 20, PCM1796_OS_64);
-        cmi8788_setandclear_2(sc, I2S_MULTICH_FORMAT, XONAR_MCLOCK_512, XONAR_MCLOCK_MASK);
-    }
-    else if (speed <= 88000)
-    {
-        pcm1796_write(sc, 20, PCM1796_OS_64);
-        cmi8788_setandclear_2(sc, I2S_MULTICH_FORMAT, XONAR_MCLOCK_256, XONAR_MCLOCK_MASK);
-    }
-    else
-    {
-        pcm1796_write(sc, 20, PCM1796_OS_32);
-        cmi8788_setandclear_2(sc, I2S_MULTICH_FORMAT, XONAR_MCLOCK_128, XONAR_MCLOCK_MASK);
-    }
-
     if (i2s_rate_where) {
         ch->spd = speed;
+        /*
+         * Vasily:
+         * XXX: This is totally empirical. At least this works on ST.
+         * Without this sample rates > 48000 will produce total silence.
+         */
+        if (speed <= 48000)
+            cmi8788_setandclear_2(sc, i2s_rate_where, XONAR_MCLOCK_512, XONAR_MCLOCK_MASK);
+        else if (speed <= 88000)
+            cmi8788_setandclear_2(sc, i2s_rate_where, XONAR_MCLOCK_256, XONAR_MCLOCK_MASK);
+        else
+            cmi8788_setandclear_2(sc, i2s_rate_where, XONAR_MCLOCK_128, XONAR_MCLOCK_MASK);
         cmi8788_setandclear_1 (sc, i2s_rate_where, i2s_rate, I2S_FMT_RATE_MASK);
     }
     return ch->spd;
