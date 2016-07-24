@@ -459,6 +459,27 @@ xonar_chan_setspeed(kobj_t obj, void *data, u_int32_t speed)
         break;
     }
 
+    /*
+     * Vasily:
+     * XXX: This is totally empirical. At least this works on ST.
+     * Without this sample rates > 48000 will produce total silence.
+     */
+    if (speed <= 48000)
+    {
+        pcm1796_write(sc, 20, PCM1796_OS_64);
+        cmi8788_setandclear_2(sc, I2S_MULTICH_FORMAT, XONAR_MCLOCK_512, XONAR_MCLOCK_MASK);
+    }
+    else if (speed <= 88000)
+    {
+        pcm1796_write(sc, 20, PCM1796_OS_64);
+        cmi8788_setandclear_2(sc, I2S_MULTICH_FORMAT, XONAR_MCLOCK_256, XONAR_MCLOCK_MASK);
+    }
+    else
+    {
+        pcm1796_write(sc, 20, PCM1796_OS_32);
+        cmi8788_setandclear_2(sc, I2S_MULTICH_FORMAT, XONAR_MCLOCK_128, XONAR_MCLOCK_MASK);
+    }
+
     if (i2s_rate_where) {
         ch->spd = speed;
         cmi8788_setandclear_1 (sc, i2s_rate_where, i2s_rate, I2S_FMT_RATE_MASK);
@@ -471,8 +492,8 @@ xonar_chan_setformat(kobj_t obj, void *data, u_int32_t format)
 {
     struct xonar_chinfo *ch = data;
     struct xonar_info *sc = ch->parent;
-    int bits, bits_where;
-    bits_where = 0;
+    int bits, bits_where = 0;
+    int i2s_bits, i2s_bits_where = 0;
 
     XONAR_DEBUG("%s %d bits, %d chans\n", __func__, AFMT_BIT(format),
                 AFMT_CHANNEL(format));
@@ -491,9 +512,18 @@ xonar_chan_setformat(kobj_t obj, void *data, u_int32_t format)
     switch (ch->dir) {
     case PCMDIR_PLAY:
         bits_where = PLAY_FORMAT;
+        i2s_bits_where = I2S_MULTICH_FORMAT;
         break;
     case PCMDIR_REC:
         bits_where = REC_FORMAT;
+        switch (ch->adc_type) {
+        case 1:
+            i2s_bits_where = I2S_ADC1_FORMAT;
+            break;
+        case 2:
+            i2s_bits_where = I2S_ADC2_FORMAT;
+            break;
+        }
         break;
     }
 
@@ -503,6 +533,12 @@ xonar_chan_setformat(kobj_t obj, void *data, u_int32_t format)
         cmi8788_setandclear_1 (sc, bits_where, bits, MULTICH_FORMAT_MASK);
     }
 
+    if (i2s_bits_where)
+    {
+        i2s_bits = i2s_get_bits (ch->fmt);
+        cmi8788_setandclear_1 (sc, i2s_bits_where, i2s_bits, I2S_BITS_MASK);
+    }
+
     return 0;
 }
 
@@ -510,7 +546,6 @@ static void
 xonar_prepare_input(struct xonar_chinfo *ch)
 {
     struct xonar_info *sc = ch->parent;
-    int i2s_bits;
     uint32_t addr = sc->phys[1];
 
     switch (ch->adc_type) {
@@ -525,11 +560,6 @@ xonar_prepare_input(struct xonar_chinfo *ch)
         cmi8788_write_4(sc, RECB_ADDR, addr);
         cmi8788_write_2(sc, RECB_SIZE, sc->bufsz / 4 - 1);
         cmi8788_write_2(sc, RECB_FRAG, 1024 / 4 /* XXX */ - 1);
-
-        /* Vasily: Should we move it to xonar_set_format? */
-        /* setup i2s bits in the i2s register */
-        i2s_bits = i2s_get_bits (ch->fmt);
-        cmi8788_setandclear_1 (sc, I2S_ADC2_FORMAT, i2s_bits, I2S_BITS_MASK);
         break;
     default:
         break;
@@ -540,7 +570,6 @@ static void
 xonar_prepare_output(struct xonar_chinfo *ch)
 {
     struct xonar_info *sc = ch->parent;
-    int i2s_bits;
     uint32_t addr = sc->phys[0];
 
     switch (ch->dac_type) {
@@ -579,10 +608,6 @@ xonar_prepare_output(struct xonar_chinfo *ch)
         cmi8788_write_4(sc, MULTICH_FRAG, 1024 / 4 /* XXX */ - 1);
 
         cmi8788_setandclear_1 (sc, MULTICH_MODE, channels, MULTICH_MODE_CH_MASK);
-
-        /* setup i2s bits in the i2s register */
-        i2s_bits = i2s_get_bits (ch->fmt);
-        cmi8788_setandclear_1 (sc, I2S_MULTICH_FORMAT, i2s_bits, I2S_BITS_MASK);
         break;
     default:
         break;
@@ -918,7 +943,7 @@ xonar_init(struct xonar_info *sc)
         cmi8788_setandclear_2(sc, I2C_CTRL, TWOWIRE_SPEED_FAST, 0);
 
         pcm1796_write(sc, 20, PCM1796_SRST);
-        pcm1796_write(sc,  20, 0);
+        pcm1796_write(sc,  20, PCM1796_OS_64);
         pcm1796_write(sc, 18, PCM1796_FMT_24L|PCM1796_ATLD);
         pcm1796_write(sc, 19, 0);
 
@@ -945,7 +970,7 @@ xonar_init(struct xonar_info *sc)
         cmi8788_write_i2c(sc, XONAR_ST_CLOCK, 0x5, 0x1);
 
         /* Init DAC */
-        pcm1796_write(sc, 20, 0);
+        pcm1796_write(sc, 20, PCM1796_OS_64);
         pcm1796_write(sc, 18, PCM1796_FMT_24L|PCM1796_ATLD);
         pcm1796_write(sc, 19, 0);
     }

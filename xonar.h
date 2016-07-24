@@ -187,8 +187,10 @@
 #define XONAR_ST_CLOCK		0x9c
 #define XONAR_DS_FRONTDAC	0x1
 #define XONAR_DS_SURRDAC	0x0
+#define XONAR_MCLOCK_128	0x00
 #define XONAR_MCLOCK_256	0x10
 #define XONAR_MCLOCK_512	0x20
+#define XONAR_MCLOCK_MASK 	0x30
 
 /* PCM1796 defines */
 /* register 16 */
@@ -222,7 +224,8 @@
 #define PCM1796_ATS 		0x60
 
 /* register 20 */
-#define PCM1796_OS 		0x03
+#define PCM1796_OS_64 		0x00
+#define PCM1796_OS_32 		0x01
 #define PCM1796_CHSL 		0x04
 #define PCM1796_MONO 		0x08
 #define PCM1796_DFTH 		0x10
