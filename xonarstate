@@ -15,12 +15,13 @@ name="xonarstate"
 rcvar="xonarstate_enable"
 stop_cmd="xonarstate_stop"
 start_cmd="xonarstate_start"
+required_modules="snd_xonar"
 
 xonar_state_path="/var/db"
 
 get_xonar_units()
 {
-    (dmesg | grep "Asus Xonar" | sed -rn "s/pcm([[:digit:]]+).*/\1/p" | uniq)
+    (grep "Asus Xonar" /dev/sndstat | sed -rn "s/pcm([[:digit:]]+).*/\1/p" | uniq)
 }
 
 get_xonar_savedstates()
@@ -48,11 +49,17 @@ xonarstate_start()
 {
     local state
     local ctl
+    local unit
 
     for state in `get_xonar_savedstates`; do
         for ctl in `cat ${state}`; do
             sysctl $ctl > /dev/null
         done
+    done
+
+    for unit in `get_xonar_units`; do
+        sysctl dev.pcm.$unit.play.vchanmode=adaptive > /dev/null
+        sysctl dev.pcm.$unit.rec.vchanmode=adaptive > /dev/null
     done
 }
 
