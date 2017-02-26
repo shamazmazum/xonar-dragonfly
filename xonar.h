@@ -345,7 +345,7 @@ struct xonar_chinfo {
 	struct pcm_channel 	*channel;
 	struct xonar_info 	*parent;
 	int			dir;
-	u_int32_t		fmt, spd, phys_buf, bps;
+	u_int32_t		fmt, spd, phys_buf;
 	int 			adc_type;
 	int 			dac_type;
 	int 			dma_start;

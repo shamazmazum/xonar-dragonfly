@@ -340,18 +340,18 @@ i2s_get_rate(int rate)
 }
 
 static int
-i2s_get_bits(int bits)
+i2s_get_bits(int fmt)
 {
     int i2s_bits;
 
-    switch (bits) {
-    case AFMT_S24_LE:
+    switch (AFMT_BIT(fmt)) {
+    case 24:
         i2s_bits = I2S_FMT_BITS24;
         break;
-    case AFMT_S32_LE:
+    case 32:
         i2s_bits = I2S_FMT_BITS32;
         break;
-    case AFMT_S16_LE:
+    case 16:
     default:
         i2s_bits = I2S_FMT_BITS16;
         break;
@@ -375,7 +375,6 @@ xonar_chan_init(kobj_t obj, void *devinfo,
     ch->channel = c;
     ch->dir = dir;
     ch->blksz = 2048;
-    ch->bps = 16;
     switch (sc->pnum) {
     case 0:
     case 1:
@@ -486,52 +485,55 @@ xonar_chan_setformat(kobj_t obj, void *data, u_int32_t format)
 {
     struct xonar_chinfo *ch = data;
     struct xonar_info *sc = ch->parent;
-    int bits, bits_where = 0;
-    int i2s_bits, i2s_bits_where = 0;
+    int bits, bits_where;
+    int i2s_bits, i2s_bits_where;
+    int found = 0;
 
     XONAR_DEBUG("%s %d bits, %d chans\n", __func__, AFMT_BIT(format),
                 AFMT_CHANNEL(format));
 
-    if (format & AFMT_S32_LE)
+    switch (AFMT_BIT(format)) {
+    case 32:
         bits = 8;
-    else if (format & AFMT_S16_LE)
-        bits = 0;
-    else if (format & AFMT_S24_LE)
+        break;
+    case 24:
         bits = 4;
-    else {
+        break;
+    case 16:
+        bits = 0;
+        break;
+    default:
         device_printf(sc->dev, "format unknown\n");
-        return 1;
+        return EINVAL;
     }
 
     switch (ch->dir) {
     case PCMDIR_PLAY:
         bits_where = PLAY_FORMAT;
         i2s_bits_where = I2S_MULTICH_FORMAT;
+        found = 1;
         break;
     case PCMDIR_REC:
         bits_where = REC_FORMAT;
         switch (ch->adc_type) {
         case 1:
             i2s_bits_where = I2S_ADC1_FORMAT;
+            found = 1;
             break;
         case 2:
             i2s_bits_where = I2S_ADC2_FORMAT;
+            found = 1;
             break;
         }
         break;
     }
 
-    if (bits_where) {
-        ch->fmt = format;
-        ch->bps = bits;
-        cmi8788_setandclear_1 (sc, bits_where, bits, MULTICH_FORMAT_MASK);
-    }
+    if (!found) return EINVAL;
 
-    if (i2s_bits_where)
-    {
-        i2s_bits = i2s_get_bits (ch->fmt);
-        cmi8788_setandclear_1 (sc, i2s_bits_where, i2s_bits, I2S_BITS_MASK);
-    }
+    ch->fmt = format;
+    cmi8788_setandclear_1 (sc, bits_where, bits, MULTICH_FORMAT_MASK);
+    i2s_bits = i2s_get_bits (ch->fmt);
+    cmi8788_setandclear_1 (sc, i2s_bits_where, i2s_bits, I2S_BITS_MASK);
 
     return 0;
 }
