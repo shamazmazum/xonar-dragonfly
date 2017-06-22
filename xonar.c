@@ -360,6 +360,19 @@ i2s_get_bits(int fmt)
     return i2s_bits;
 }
 
+static const char*
+direction_as_string (int dir)
+{
+    switch (dir) {
+    case PCMDIR_PLAY:
+        return "Play";
+    case PCMDIR_REC:
+        return "Rec";
+    default:
+        return "Unknown";
+    }
+}
+
 static void *
 xonar_chan_init(kobj_t obj, void *devinfo,
          struct snd_dbuf *b, struct pcm_channel *c, int dir)
@@ -378,7 +391,8 @@ xonar_chan_init(kobj_t obj, void *devinfo,
     switch (sc->pnum) {
     case 0:
     case 1:
-        device_printf(sc->dev, "channel%d (Multichannel)\n", sc->pnum);
+        device_printf(sc->dev, "channel %d (Multichannel) (%s)\n",
+                      sc->pnum, direction_as_string (dir));
         ch->dac_type = 1;
         switch (sc->model) {
             case SUBID_XONAR_D1:
@@ -402,7 +416,8 @@ xonar_chan_init(kobj_t obj, void *devinfo,
         /* if there is no front panel AC97, then skip the device */
         break;
     case 3:
-        device_printf(sc->dev, "channel%d (SPDIF)\n", sc->pnum);
+        device_printf(sc->dev, "channel %d (SPDIF) (%s)\n",
+                      sc->pnum, direction_as_string (dir));
         break;
     }
 
