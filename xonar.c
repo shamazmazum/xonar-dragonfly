@@ -771,33 +771,36 @@ static int
 xonar_mixer_init(struct snd_mixer *m)
 {
     struct xonar_info *sc = mix_getdevinfo(m);
-    int devs;
-    int rec_devs;
+    uint32_t devs = 0;
+    uint32_t rec_devs = 0;
 
     /* Create AC97 submixer */
     if (sc->ac97_codec != NULL) {
         sc->ac97_mixer = mixer_create (sc->dev, ac97_getmixerclass(), sc->ac97_codec, "ac97");
-        /* Here comes AC97 initialization, as mixer_create resets all configuration made to is before */
-        ac97_init (sc);
+        if (sc->ac97_mixer != NULL) {
+            /* Here comes AC97 initialization, as mixer_create resets all configuration made to is before */
+            ac97_init (sc);
+            devs = mix_getdevs (sc->ac97_mixer);
+            rec_devs = mix_getrecdevs (sc->ac97_mixer);
+        }
     }
 
-    devs = SOUND_MASK_VOLUME;
-    if (sc->ac97_mixer != NULL) {
-        devs |= SOUND_MASK_IGAIN;
-        devs |= SOUND_MASK_RECLEV;
-    }
+    /*
+      It is here regardless of AC97 mixer.
+    */
+    devs |= SOUND_MASK_VOLUME;
 
-    rec_devs = 0;
-    if (sc->ac97_mixer != NULL)
-        rec_devs |= SOUND_MASK_MIC;
-
-    mix_setdevs(m, devs | rec_devs);
     /*
       FIXME: At least in Xonar ST(X) you cannot amplify line input
       but you can still choose it as audio input
     */
-    mix_setrecdevs (m, rec_devs | SOUND_MASK_LINE);
-    return (0);
+    devs |= SOUND_MASK_LINE;
+    rec_devs |= SOUND_MASK_LINE;
+
+    mix_setdevs(m, devs);
+    mix_setrecdevs (m, rec_devs);
+
+    return 0;
 }
 
 static int
@@ -823,10 +826,9 @@ xonar_mixer_set(struct snd_mixer *m, unsigned dev, unsigned left, unsigned right
     snd_mtxlock(sc->lock);
     if (dev == SOUND_MIXER_VOLUME) {
         pcm1796_set_volume(sc, left, right);
-    }
-
-    if (sc->ac97_mixer != NULL)
+    } else if (sc->ac97_mixer != NULL) {
         mix_set (sc->ac97_mixer, dev, left, right);
+    }
     snd_mtxunlock(sc->lock);
     return (0);
 }
