@@ -3,15 +3,8 @@
 #include <sys/module.h>
 #include <sys/bus.h>
 
-#if defined __DragonFly__
-#include <bus/pci/pcireg.h>
-#include <bus/pci/pcivar.h>
-#elif defined __FreeBSD__
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcivar.h>
-#else
-#error "Platform not supported"
-#endif
 
 #include <dev/sound/pcm/sound.h>
 #include <dev/sound/pcm/ac97.h>
@@ -20,7 +13,6 @@
 #include <sys/endian.h>
 
 #include "xonar.h"
-#include "xonar_compat.h"
 #include "xonar_io.h"
 #include "mixer_if.h"
 
@@ -30,6 +22,17 @@
 #define CHAN_STATE_INVALID  3
 
 #define ARRAY_SIZE(a) sizeof(a)/sizeof(a[0])
+
+#define xonar_create_dma_tag(tag, maxsize, parent_tag, lock) bus_dma_tag_create ( \
+        /* parent */ parent_tag,                                        \
+        /* alignment */ 4, /* boundary */ 0,                            \
+        /* lowaddr */ BUS_SPACE_MAXADDR_32BIT,                          \
+        /* highaddr */ BUS_SPACE_MAXADDR,                               \
+        /* filter */ NULL, /* filterarg */ NULL,                        \
+        /* maxsize */ maxsize, /* nsegments */ 1,                       \
+        /* maxsegz */ 0x3ffff,                                          \
+        /* flags */ 0, /* lock fn */ busdma_lock_mutex,                 \
+        /* lock */ lock, /* result */ tag)
 
 #define OUTPUT_LINE         0
 #define OUTPUT_REAR_HP      1
@@ -1046,7 +1049,7 @@ xonar_cleanup(struct xonar_info *sc)
         sc->ac97_codec = NULL;
     }
 
-    kern_free(sc, M_DEVBUF);
+    free(sc, M_DEVBUF);
 }
 
 static int
@@ -1256,7 +1259,7 @@ xonar_attach(device_t dev)
     char status[SND_STATUSLEN];
     int i;
 
-    sc = kern_malloc(sizeof(*sc), M_DEVBUF, M_WAITOK | M_ZERO);
+    sc = malloc(sizeof(*sc), M_DEVBUF, M_WAITOK | M_ZERO);
     sc->lock = snd_mtxcreate(device_get_nameunit(dev), "snd_cmi8788 softc");
     sc->dev = dev;
 
@@ -1323,9 +1326,9 @@ xonar_attach(device_t dev)
         sc->pnum++;
     }
 
-    kern_snprintf(status, SND_STATUSLEN, "at io 0x%lx irq %ld %s",
-         rman_get_start(sc->reg), rman_get_start(sc->irq),
-         PCM_KLDSTRING(snd_cmi8788));
+    snprintf(status, SND_STATUSLEN, "at io 0x%lx irq %ld %s",
+             rman_get_start(sc->reg), rman_get_start(sc->irq),
+             device_get_nameunit(device_get_parent(dev)));
     pcm_setstatus(dev, status);
 
     SYSCTL_ADD_PROC(device_get_sysctl_ctx(sc->dev),
@@ -1409,6 +1412,6 @@ static driver_t cmi8788_driver = {
     PCM_SOFTC_SIZE,
 };
 
-DRIVER_MODULE(snd_cmi8788, pci, cmi8788_driver, pcm_devclass, NULL, NULL);
+DRIVER_MODULE(snd_cmi8788, pci, cmi8788_driver, NULL, NULL);
 MODULE_DEPEND(snd_cmi8788, sound, SOUND_MINVER, SOUND_PREFVER, SOUND_MAXVER);
 MODULE_VERSION(snd_cmi8788, 0);
