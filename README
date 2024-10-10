@@ -1,2 +1,7 @@
-A tiny bit modified xonar-freebsd driver adapted for DragonFlyBSD. Also supports Asus Essence ST card.
-Original author: Alexander Polakov
+Maintainable Asus Xonar Essence ST (and maybe STX) driver for FreeBSD.
+
+There is a compatibility layer with DragonFlyBSD, which I cannot
+maintain now as I no longer use DragonFlyBSD. I can be found in
+dragonfly-compat branch.
+
+Original author of the driver: Alexander Polakov
